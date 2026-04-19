@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Daily Solar Summary — April 18, 2026</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #1a1a1a; padding: 20px; }
+  .container { max-width: 700px; margin: 0 auto; background: white; border-radius: 16px; padding: 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+  .date-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .date { font-size: 20px; font-weight: 600; }
+  .pto-badge { display: inline-block; background: #E1F5EE; color: #085041; border-radius: 20px; font-size: 12px; font-weight: 600; padding: 3px 12px; margin-bottom: 14px; }
+  .section { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: #999; margin: 20px 0 10px; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+  .card { background: #f8f8f8; border-radius: 10px; padding: 12px 14px; }
+  .card .val { font-size: 22px; font-weight: 600; margin: 4px 0 2px; }
+  .card .lbl { font-size: 11px; color: #666; }
+  .card .sub { font-size: 11px; color: #999; margin-top: 2px; }
+  .flow-row { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .flow-box { background: #f8f8f8; border-radius: 10px; padding: 10px 16px; text-align: center; min-width: 80px; }
+  .flow-box .fval { font-size: 18px; font-weight: 600; }
+  .flow-box .flbl { font-size: 11px; color: #666; margin-top: 2px; }
+  .flow-arrow { font-size: 20px; color: #bbb; }
+  .highlight { border: 2px solid #ddd; }
+  .bar-wrap { background: #f8f8f8; border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; }
+  .bar-label { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: #444; }
+  .bar-track { background: #e8e8e8; border-radius: 4px; height: 8px; }
+  .bar-fill { height: 8px; border-radius: 4px; }
+  .srec-card { background: #f8f8f8; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .srec-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .srec-title { font-size: 11px; color: #666; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+  .srec-val { font-size: 13px; font-weight: 600; color: #1D9E75; }
+  .srec-track { background: #e8e8e8; border-radius: 6px; height: 12px; overflow: hidden; }
+  .srec-fill { height: 12px; border-radius: 6px; background: #1D9E75; }
+  .srec-labels { display: flex; justify-content: space-between; font-size: 11px; color: #999; margin-top: 5px; }
+  .divider { border: none; border-top: 1px solid #eee; margin: 20px 0; }
+  .insights { background: #f8f8f8; border-radius: 12px; padding: 14px; }
+  .insight-row { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-bottom: 1px solid #eee; font-size: 13px; color: #555; line-height: 1.5; }
+  .insight-row:last-child { border-bottom: none; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+  .perf-meter { background: #f8f8f8; border-radius: 12px; padding: 14px 16px; margin-bottom: 18px; }
+  .perf-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .perf-section-lbl { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: #999; }
+  .perf-rating { font-size: 14px; font-weight: 700; letter-spacing: 0.04em; }
+  .perf-gauge { position: relative; height: 16px; border-radius: 8px; overflow: visible; margin: 4px 0 8px; }
+  .perf-zone { position: absolute; top: 0; height: 100%; }
+  .perf-needle { position: absolute; top: -4px; bottom: -4px; width: 4px; border-radius: 2px; background: #1a1a1a; transform: translateX(-50%); box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+  .perf-zone-labels { display: flex; font-size: 10px; color: #bbb; margin-top: 4px; }
+  .perf-sub { font-size: 11px; color: #888; margin-top: 6px; }
+  @media (max-width: 500px) {
+    .grid4 { grid-template-columns: repeat(2, 1fr); }
+    .grid3 { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="date-row">
+    <div class="date">April 18, 2026</div>
+  </div>
+  <div class="pto-badge">9 days since PTO</div>
+
+  <!-- Performance meter -->
+  <div class="perf-meter">
+    <div class="perf-header">
+      <span class="perf-section-lbl">Today's performance</span>
+      <span class="perf-rating" style="color:#1D9E75">EXCELLENT</span>
+    </div>
+    <div class="perf-gauge">
+      <!-- colour zones -->
+      <div class="perf-zone" style="left:0;width:33.3%;background:#FFCDD2;border-radius:8px 0 0 8px"></div>
+      <div class="perf-zone" style="left:33.3%;width:18.6%;background:#FFE0B2"></div>
+      <div class="perf-zone" style="left:51.9%;width:14.800000000000004%;background:#C8E6C9"></div>
+      <div class="perf-zone" style="left:66.7%;width:33.3%;background:#A5D6A7;border-radius:0 8px 8px 0"></div>
+      <!-- historical avg tick -->
+      <div style="position:absolute;left:100%;top:-3px;bottom:-3px;width:2px;background:rgba(0,0,0,0.25);transform:translateX(-50%);border-radius:1px" title="Historical avg"></div>
+      <!-- today's needle -->
+      <div class="perf-needle" style="left:100%"></div>
+    </div>
+    <div class="perf-zone-labels">
+      <span style="width:33.3%">Poor</span>
+      <span style="width:18.6%">Fair</span>
+      <span style="width:14.800000000000004%">Good</span>
+      <span>Excellent</span>
+    </div>
+    <div class="perf-sub">Today 66.1 kWh · Avg 58.2 kWh (9d) · Best 69.2 kWh · Monthly daily target 42 kWh</div>
+  </div>
+
+  <div class="section">Energy flow</div>
+  <div class="flow-row">
+    <div class="flow-box">
+      <div class="fval" style="color:#1D9E75">66.1</div>
+      <div class="flbl">kWh produced<span style="font-size:10px;color:#1D9E75;margin-left:6px;white-space:nowrap">▲ 13.0 kWh (25%)</span></div>
+    </div>
+    <div class="flow-arrow">vs</div>
+    <div class="flow-box highlight">
+      <div class="fval" style="color:#D85A30">16.1</div>
+      <div class="flbl">kWh consumed<span style="font-size:10px;color:#D85A30;margin-left:6px;white-space:nowrap">▼ 20.7 kWh (56%)</span></div>
+    </div>
+    <div class="flow-arrow">=</div>
+    <div class="flow-box" style="border:2px solid #1D9E75">
+      <div class="fval" style="color:#1D9E75">+50.0</div>
+      <div class="flbl">kWh net export<span style="font-size:10px;color:#1D9E75;margin-left:6px;white-space:nowrap">▲ 33.7 kWh (207%)</span></div>
+    </div>
+  </div>
+
+  <div class="section">Key metrics</div>
+  <div class="grid4">
+    <div class="card">
+      <div class="lbl">Net metering credit</div>
+      <div class="val" style="color:#1D9E75">+50.0</div>
+      <div class="sub">kWh net today</div>
+    </div>
+    <div class="card">
+      <div class="lbl">Month-to-date production</div>
+      <div class="val">794.3</div>
+      <div class="sub">kWh of 1,260 April target</div>
+    </div>
+    <div class="card">
+      <div class="lbl">Break-even</div>
+      <div class="val" style="color:#378ADD">~5yr 10mo</div>
+      <div class="sub">$77 earned · $16,532.55 left · Mar 2032</div>
+    </div>
+  </div>
+
+  <div class="section">Financial value today</div>
+  <div class="grid3">
+    <div class="card">
+      <div class="lbl">Electricity savings</div>
+      <div class="val" style="color:#1D9E75">$4.17<span style="font-size:10px;color:#D85A30;margin-left:6px;white-space:nowrap">▼ 5.35 (56%)</span></div>
+      <div class="sub">16.12 kWh × $0.259</div>
+    </div>
+    <div class="card">
+      <div class="lbl">Total value</div>
+      <div class="val" style="color:#1D9E75">$4.17<span style="font-size:10px;color:#D85A30;margin-left:6px;white-space:nowrap">▼ 5.35 (56%)</span></div>
+      <div class="sub">electricity savings only</div>
+    </div>
+  </div>
+
+  <div class="section">System performance</div>
+  <div class="bar-wrap">
+    <div class="bar-label"><span>Production vs theoretical max (11.2 kW × 8 hrs)</span><span><strong>74%</strong> — 66.1 / 90 kWh</span></div>
+    <div class="bar-track"><div class="bar-fill" style="width:73.8%;background:#1D9E75"></div></div>
+  </div>
+  <div class="bar-wrap">
+    <div class="bar-label"><span>Month-to-date vs April target</span><span><strong>63.0%</strong> — 794.3 / 1,260 kWh</span></div>
+    <div class="bar-track"><div class="bar-fill" style="width:63.0%;background:#378ADD"></div></div>
+  </div>
+  <div class="bar-wrap">
+    <div class="bar-label"><span>Break-even progress — $16,610 installation cost</span><span><strong>0.50%</strong> — $77.45 / $16,610</span></div>
+    <div class="bar-track"><div class="bar-fill" style="width:0.5%;background:#9B59B6"></div></div>
+  </div>
+  <div class="bar-wrap">
+    <div class="bar-label"><span>Net metering bank since PTO</span><span><strong>290.8 kWh</strong> &nbsp;·&nbsp; $75.21 &nbsp;·&nbsp; ~10 days coverage</span></div>
+    <div class="bar-track"><div class="bar-fill" style="width:58.2%;background:#378ADD"></div></div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="section">Payoff projection — electricity savings only, 3% annual rate escalation</div>
+  <table style="width:100%;border-collapse:collapse;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+    <thead>
+      <tr style="color:#999;text-align:left;border-bottom:2px solid #eee">
+        <th style="padding:6px 8px;font-weight:600">Year</th>
+        <th style="padding:6px 8px;font-weight:600;text-align:right">Elec. savings</th>
+        <th style="padding:6px 8px;font-weight:600;text-align:right">Annual value</th>
+        <th style="padding:6px 8px;font-weight:600;text-align:right">Cumulative</th>
+      </tr>
+    </thead>
+    <tbody>
+<tr style="background:white"><td style="padding:6px 8px;color:#444">2026</td><td style="padding:6px 8px;text-align:right;color:#1D9E75">$2,612</td><td style="padding:6px 8px;text-align:right;font-weight:600">$2,612</td><td style="padding:6px 8px;text-align:right;font-weight:600;color:#1a1a1a">$2,625 / $16,610</td></tr>
+<tr style="background:#fafafa"><td style="padding:6px 8px;color:#444">2027</td><td style="padding:6px 8px;text-align:right;color:#1D9E75">$2,690</td><td style="padding:6px 8px;text-align:right;font-weight:600">$2,690</td><td style="padding:6px 8px;text-align:right;font-weight:600;color:#1a1a1a">$5,322 / $16,610</td></tr>
+<tr style="background:white"><td style="padding:6px 8px;color:#444">2028</td><td style="padding:6px 8px;text-align:right;color:#1D9E75">$2,771</td><td style="padding:6px 8px;text-align:right;font-weight:600">$2,771</td><td style="padding:6px 8px;text-align:right;font-weight:600;color:#1a1a1a">$8,093 / $16,610</td></tr>
+<tr style="background:#fafafa"><td style="padding:6px 8px;color:#444">2029</td><td style="padding:6px 8px;text-align:right;color:#1D9E75">$2,854</td><td style="padding:6px 8px;text-align:right;font-weight:600">$2,854</td><td style="padding:6px 8px;text-align:right;font-weight:600;color:#1a1a1a">$10,947 / $16,610</td></tr>
+<tr style="background:white"><td style="padding:6px 8px;color:#444">2030</td><td style="padding:6px 8px;text-align:right;color:#1D9E75">$2,940</td><td style="padding:6px 8px;text-align:right;font-weight:600">$2,940</td><td style="padding:6px 8px;text-align:right;font-weight:600;color:#1a1a1a">$13,887 / $16,610</td></tr>
+<tr style="background:#E1F5EE"><td style="padding:6px 8px;color:#444">2031 ✓ paid off</td><td style="padding:6px 8px;text-align:right;color:#1D9E75">$3,028</td><td style="padding:6px 8px;text-align:right;font-weight:600">$3,028</td><td style="padding:6px 8px;text-align:right;font-weight:600;color:#1D9E75">$16,610 / $16,610</td></tr>
+    </tbody>
+  </table>
+
+  <div class="divider"></div>
+
+  <div class="section">Context &amp; insights</div>
+  <div class="insights">
+    <div class="insight-row"><div class="dot" style="background:#EF9F27"></div><div>Good output — 66.1 kWh is 74% of theoretical max; cloud cover likely reduced yield</div></div>
+    <div class="insight-row"><div class="dot" style="background:#1D9E75"></div><div>49.99 kWh net exported — $12.93 in bill credits earned today</div></div>
+    <div class="insight-row"><div class="dot" style="background:#378ADD"></div><div>Month-to-date: 794.3 kWh (63.0% of 1,260 kWh April target)</div></div>
+  </div>
+
+</div>
+</body>
+</html>

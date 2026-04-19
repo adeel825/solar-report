@@ -1,0 +1,24 @@
+{
+    "client_id": "YOUR_ENPHASE_CLIENT_ID",
+    "client_secret": "YOUR_ENPHASE_CLIENT_SECRET",
+    "api_key": "YOUR_ENPHASE_API_KEY",
+    "system_id": "YOUR_ENPHASE_SYSTEM_ID",
+    "access_token": "YOUR_ENPHASE_ACCESS_TOKEN",
+    "refresh_token": "YOUR_ENPHASE_REFRESH_TOKEN",
+
+    "pseg_rate": 0.2586,
+    "pseg_delivery_rate": 0.059968,
+    "pseg_supply_rate": 0.198580,
+    "pseg_fixed_monthly": 4.40,
+    "srec_rate": 76.5,
+    "net_cost": 16610,
+    "annual_target_kwh": 13400,
+
+    "email_from": "you@yourdomain.com",
+    "email_to": "you@yourdomain.com",
+    "email_password": "NOT_USED_KEPT_FOR_REFERENCE",
+    "resend_api_key": "YOUR_RESEND_API_KEY",
+
+    "latitude": 40.0000,
+    "longitude": -74.0000
+}
