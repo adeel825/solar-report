@@ -9,6 +9,8 @@ A daily solar monitoring system for Enphase solar installations. Fetches product
 ### Daily Email Report
 Sent every morning at 5am covering the previous day.
 
+![Daily email report](docs/screenshot-email.png)
+
 - **Weather** — daily high/low and conditions in the top-right corner (Open-Meteo, no key required)
 - **Performance meter** — colour-banded gauge rating production as Poor / Fair / Good / Excellent vs. monthly daily target
 - **Energy flow** — produced vs. consumed with net export/import
