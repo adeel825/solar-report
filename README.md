@@ -25,6 +25,7 @@ Sent every morning at 5am covering the previous day.
   - **Net metering bank** — cumulative kWh and dollar value banked since PTO, with days-of-coverage estimate
 
 ### Weekly Report
+Sent every Monday at 6:00 AM covering the previous week.
 
 ![Weekly solar report](docs/screenshot-weekly.png)
 
@@ -36,6 +37,7 @@ Sent every morning at 5am covering the previous day.
 - Day-by-day breakdown table
 
 ### Monthly Report
+Sent on the 1st of each month at 6:30 AM covering the previous month.
 
 ![Monthly solar report](docs/screenshot-monthly.png)
 
