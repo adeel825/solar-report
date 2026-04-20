@@ -70,6 +70,104 @@ def _fetch_weather(d: str, lat: float, lon: float) -> dict | None:
             pass
     return None
 
+
+def _fetch_forecast(d: str, lat: float, lon: float) -> dict | None:
+    """Fetch forecast for a future date from Open-Meteo forecast API."""
+    params = dict(
+        latitude=lat, longitude=lon,
+        start_date=d, end_date=d,
+        daily="temperature_2m_max,temperature_2m_min,weathercode",
+        temperature_unit="fahrenheit",
+        timezone="America/New_York",
+    )
+    try:
+        r = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=6)
+        if r.ok:
+            daily = r.json().get("daily", {})
+            codes = daily.get("weathercode") or daily.get("weather_code", [])
+            highs = daily.get("temperature_2m_max", [])
+            lows  = daily.get("temperature_2m_min", [])
+            if codes and highs and lows:
+                code = int(codes[0])
+                return {
+                    "code":  code,
+                    "emoji": _WMO_EMOJI.get(code, "🌡️"),
+                    "desc":  _WMO_DESC.get(code, ""),
+                    "high":  round(highs[0]),
+                    "low":   round(lows[0]),
+                }
+    except Exception:
+        pass
+    return None
+
+
+def _headline_daily(produced: float, prev, weather, forecast, daily_target: float) -> str:
+    """Build a punchy one-sentence headline for the daily email."""
+    # Rating opener
+    ratio = produced / daily_target if daily_target else 0
+    if ratio >= 0.90:
+        opener = "Excellent day"
+    elif ratio >= 0.70:
+        opener = "Good day"
+    elif ratio >= 0.45:
+        opener = "Decent output"
+    else:
+        opener = "Tough day"
+
+    # Weather context
+    wx_part = ""
+    if weather:
+        code = weather["code"]
+        if code == 0:
+            wx_part = f" under clear skies ({weather['high']}°F)"
+        elif code in (1, 2):
+            wx_part = f" with some clouds ({weather['high']}°F)"
+        elif code == 3:
+            wx_part = f" under overcast skies ({weather['high']}°F)"
+        elif code in (45, 48):
+            wx_part = f" through morning fog ({weather['high']}°F)"
+        elif code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82):
+            wx_part = f" in rainy conditions ({weather['high']}°F)"
+        elif code in (71, 73, 75, 77, 85, 86):
+            wx_part = f" through snowy weather ({weather['high']}°F)"
+        elif code in (95, 96, 99):
+            wx_part = f" with thunderstorms ({weather['high']}°F)"
+        else:
+            wx_part = f" ({weather['high']}°F)"
+
+    # vs yesterday
+    delta_part = ""
+    if prev and prev["produced"]:
+        diff = produced - prev["produced"]
+        pct = round(abs(diff) / prev["produced"] * 100)
+        if abs(diff) >= 0.3:
+            direction = "up" if diff > 0 else "down"
+            delta_part = f", {direction} {pct}% from yesterday's {prev['produced']:.1f} kWh"
+
+    # Tomorrow's forecast
+    tmrw_part = ""
+    if forecast:
+        code = forecast["code"]
+        hi = forecast["high"]
+        if code == 0:
+            tmrw_part = f" — {forecast['emoji']} clear skies tomorrow ({hi}°F) should bring strong output."
+        elif code in (1, 2):
+            tmrw_part = f" — {forecast['emoji']} partly cloudy tomorrow ({hi}°F), moderate production likely."
+        elif code == 3:
+            tmrw_part = f" — {forecast['emoji']} overcast forecast tomorrow ({hi}°F) will cap output."
+        elif code in (45, 48):
+            tmrw_part = f" — {forecast['emoji']} foggy tomorrow ({hi}°F), expect reduced production."
+        elif code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82):
+            tmrw_part = f" — {forecast['emoji']} rain in the forecast tomorrow ({hi}°F), expect a low-output day."
+        elif code in (71, 73, 75, 77, 85, 86):
+            tmrw_part = f" — {forecast['emoji']} snow tomorrow ({hi}°F), minimal output expected."
+        elif code in (95, 96, 99):
+            tmrw_part = f" — {forecast['emoji']} storms tomorrow ({hi}°F), output will be very low."
+        else:
+            tmrw_part = f" — {forecast['emoji']} {forecast['desc'].lower()} tomorrow ({hi}°F)."
+
+    return f"{opener} — {produced:.1f} kWh{wx_part}{delta_part}{tmrw_part}"
+
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
 MONTHLY_TARGETS = {
@@ -232,6 +330,10 @@ def build_email(target_date: str) -> str:
     _lon = cfg.get("longitude")
     weather = _fetch_weather(d, _lat, _lon) if (_lat and _lon) else None
 
+    # Tomorrow's forecast for headline prediction
+    tomorrow_str = (date.fromisoformat(d) + timedelta(days=1)).isoformat()
+    forecast = _fetch_forecast(tomorrow_str, _lat, _lon) if (_lat and _lon) else None
+
     # Previous day for change indicators
     prev_date = (date.fromisoformat(d) - timedelta(days=1)).isoformat()
     prev = database.get_reading(prev_date)
@@ -272,6 +374,9 @@ def build_email(target_date: str) -> str:
         rating, rating_color = "FAIR", C_AMBER
     else:
         rating, rating_color = "POOR", C_RED
+
+    # Headline summary
+    headline = _headline_daily(produced, prev, weather, forecast, daily_target)
 
     # Historical context line
     conn = database.get_conn()
@@ -362,7 +467,10 @@ def build_email(target_date: str) -> str:
        if weather else '<td></td>'}
     </tr>
   </table>
-  <div style="display:inline-block;background:#E1F5EE;color:#085041;border-radius:20px;font-size:12px;font-weight:600;padding:3px 12px;margin-bottom:16px">{pto_label}</div>
+  <div style="display:inline-block;background:#E1F5EE;color:#085041;border-radius:20px;font-size:12px;font-weight:600;padding:3px 12px;margin-bottom:12px">{pto_label}</div>
+
+  <!-- Headline summary -->
+  <p style="margin:0 0 16px;font-size:14px;color:#333;font-style:italic;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">{headline}</p>
 
   <!-- Performance meter -->
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{C_BG};border-radius:10px;margin-bottom:16px">

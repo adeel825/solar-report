@@ -11,6 +11,7 @@ Sent every morning at 5am covering the previous day.
 
 ![Daily email report](docs/screenshot-email.png)
 
+- **Headline summary** — punchy one-sentence digest: today's rating + weather context + % change vs yesterday + tomorrow's forecast (e.g. *"Tough day — 13.8 kWh in rainy conditions (52°F), down 79% from yesterday's 66.1 kWh — ☁️ overcast forecast tomorrow (50°F) will cap output."*)
 - **Weather** — daily high/low and conditions in the top-right corner (Open-Meteo, no key required)
 - **Performance meter** — colour-banded gauge rating production as Poor / Fair / Good / Excellent vs. monthly daily target
 - **Energy flow** — produced vs. consumed with net export/import
@@ -24,6 +25,7 @@ Sent every morning at 5am covering the previous day.
   - **Net metering bank** — cumulative kWh and dollar value banked since PTO, with days-of-coverage estimate
 
 ### Weekly & Monthly Reports
+- **Headline summary** — one-sentence weekly digest with week-over-week comparison and next-week weather forecast
 - Week-over-week and month-over-month change indicators
 - Day-by-day breakdown table
 - Sparkline bar charts

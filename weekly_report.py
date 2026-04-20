@@ -8,7 +8,9 @@ import math
 import sys
 from datetime import date, timedelta
 from pathlib import Path
+from statistics import mode
 
+import requests
 import resend
 
 import database
@@ -16,6 +18,116 @@ from report_builder import (
     MONTHLY_TARGETS, PTO_DATE, REPORTS_DIR,
     _fmt_date, _pct, _delta_html, _break_even, _pto_duration, load_config
 )
+
+# WMO weather code → emoji (shared with email_builder)
+_WMO_EMOJI = {
+    0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️",
+    45: "🌫️", 48: "🌫️",
+    51: "🌦️", 53: "🌦️", 55: "🌦️", 56: "🌦️", 57: "🌦️",
+    61: "🌧️", 63: "🌧️", 65: "🌧️", 66: "🌧️", 67: "🌧️",
+    71: "❄️", 73: "❄️", 75: "❄️", 77: "❄️",
+    80: "🌦️", 81: "🌦️", 82: "🌦️",
+    85: "🌨️", 86: "🌨️",
+    95: "⛈️", 96: "⛈️", 99: "⛈️",
+}
+
+_WMO_DESC = {
+    0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+    45: "Foggy", 48: "Foggy",
+    51: "Light drizzle", 53: "Drizzle", 55: "Heavy drizzle",
+    56: "Freezing drizzle", 57: "Heavy freezing drizzle",
+    61: "Light rain", 63: "Rain", 65: "Heavy rain",
+    66: "Freezing rain", 67: "Heavy freezing rain",
+    71: "Light snow", 73: "Snow", 75: "Heavy snow", 77: "Snow grains",
+    80: "Showers", 81: "Rain showers", 82: "Heavy showers",
+    85: "Snow showers", 86: "Heavy snow showers",
+    95: "Thunderstorm", 96: "Thunderstorm w/ hail", 99: "Thunderstorm w/ hail",
+}
+
+
+def _fetch_week_forecast(start: date, lat: float, lon: float) -> dict | None:
+    """Fetch 7-day forecast summary from Open-Meteo (avg high, dominant weather code)."""
+    end = start + timedelta(days=6)
+    params = dict(
+        latitude=lat, longitude=lon,
+        start_date=start.isoformat(), end_date=end.isoformat(),
+        daily="temperature_2m_max,weathercode",
+        temperature_unit="fahrenheit",
+        timezone="America/New_York",
+    )
+    try:
+        r = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=6)
+        if r.ok:
+            daily = r.json().get("daily", {})
+            codes = daily.get("weathercode") or daily.get("weather_code", [])
+            highs = daily.get("temperature_2m_max", [])
+            if codes and highs:
+                codes_int = [int(c) for c in codes if c is not None]
+                highs_flt = [h for h in highs if h is not None]
+                dominant = mode(codes_int) if codes_int else 3
+                avg_high = round(sum(highs_flt) / len(highs_flt)) if highs_flt else 65
+                return {
+                    "dominant_code": dominant,
+                    "emoji": _WMO_EMOJI.get(dominant, "🌡️"),
+                    "desc":  _WMO_DESC.get(dominant, ""),
+                    "avg_high": avg_high,
+                }
+    except Exception:
+        pass
+    return None
+
+
+def _headline_weekly(this_week: dict, prev_week, daily_tgt: float,
+                     next_week_forecast) -> str:
+    """Build a punchy one-sentence headline for the weekly report."""
+    produced   = this_week["produced"]
+    days_count = this_week["days"] or 1
+    daily_avg  = produced / days_count
+
+    # Rating based on daily average vs target
+    ratio = daily_avg / daily_tgt if daily_tgt else 0
+    if ratio >= 0.90:
+        opener = "Strong week"
+    elif ratio >= 0.70:
+        opener = "Solid week"
+    elif ratio >= 0.45:
+        opener = "Average week"
+    else:
+        opener = "Slow week"
+
+    # vs previous week
+    delta_part = ""
+    if prev_week and prev_week.get("produced"):
+        diff = produced - prev_week["produced"]
+        pct = round(abs(diff) / prev_week["produced"] * 100)
+        if abs(diff) >= 0.5:
+            direction = "up" if diff > 0 else "down"
+            delta_part = f", {direction} {pct}% from last week's {prev_week['produced']:.1f} kWh"
+
+    # Next week outlook
+    outlook = ""
+    if next_week_forecast:
+        code = next_week_forecast["dominant_code"]
+        hi   = next_week_forecast["avg_high"]
+        emoji = next_week_forecast["emoji"]
+        if code == 0:
+            outlook = f" — {emoji} clear skies ahead next week (avg {hi}°F), strong output expected."
+        elif code in (1, 2):
+            outlook = f" — {emoji} mostly clear next week (avg {hi}°F), should be a good week."
+        elif code == 3:
+            outlook = f" — {emoji} overcast conditions forecast next week (avg {hi}°F), moderate output likely."
+        elif code in (45, 48):
+            outlook = f" — {emoji} foggy outlook next week (avg {hi}°F), production may vary."
+        elif code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82):
+            outlook = f" — {emoji} rainy week ahead (avg {hi}°F), expect reduced output."
+        elif code in (71, 73, 75, 77, 85, 86):
+            outlook = f" — {emoji} snow in the forecast next week (avg {hi}°F), minimal output expected."
+        elif code in (95, 96, 99):
+            outlook = f" — {emoji} stormy week ahead (avg {hi}°F), output will be very low."
+        else:
+            outlook = f" — {emoji} {next_week_forecast['desc'].lower()} forecast next week (avg {hi}°F)."
+
+    return f"{opener} — {produced:.1f} kWh total{delta_part}{outlook}"
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
@@ -141,6 +253,15 @@ def build_weekly_report(week_start: date | None = None) -> tuple[Path, str]:
     pto_label   = _pto_duration(end_str)
     be          = _break_even(cfg, end_str)
 
+    # Next-week forecast for headline
+    _lat = cfg.get("latitude")
+    _lon = cfg.get("longitude")
+    next_week_start = week_end + timedelta(days=1)  # the Monday after this week's Sunday
+    next_week_forecast = _fetch_week_forecast(next_week_start, _lat, _lon) if (_lat and _lon) else None
+
+    # Headline
+    headline = _headline_weekly(this_week, prev_week, daily_tgt, next_week_forecast)
+
     # Week-over-week deltas
     d_prod  = _delta_html(produced,    pw["produced"]    if pw else None, " kWh")
     d_cons  = _delta_html(consumed,    pw["consumed"]    if pw else None, " kWh")
@@ -188,7 +309,11 @@ def build_weekly_report(week_start: date | None = None) -> tuple[Path, str]:
   <div style="font-size:22px;font-weight:700;color:#1a1a1a;margin-bottom:4px">Weekly Solar Report</div>
   <div style="font-size:15px;color:#555;margin-bottom:6px">{week_label}</div>
   <div style="display:inline-block;background:#E1F5EE;color:#085041;border-radius:20px;
-    font-size:12px;font-weight:600;padding:3px 12px;margin-bottom:20px">{pto_label}</div>
+    font-size:12px;font-weight:600;padding:3px 12px;margin-bottom:12px">{pto_label}</div>
+
+  <!-- Headline summary -->
+  <p style="margin:0 0 16px;font-size:14px;color:#333;font-style:italic;line-height:1.5;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">{headline}</p>
 
   <!-- Sparkline -->
   {section("Daily production this week")}
