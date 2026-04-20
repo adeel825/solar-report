@@ -181,13 +181,14 @@ def _spark_bars(days: list[dict], metric: str = "produced") -> str:
 # Report builder
 # ---------------------------------------------------------------------------
 
-def _stat_row(label: str, value: str, delta_html: str, sub: str = "") -> str:
+def _stat_row(label: str, value: str, delta_html: str, sub: str = "",
+              color: str = "#1a1a1a", label_color: str = "#555") -> str:
     sub_td = f'<div style="font-size:11px;color:#999;margin-top:1px">{sub}</div>' if sub else ""
     return (
         f'<tr style="border-bottom:1px solid #f0f0f0">'
-        f'<td style="padding:8px 12px;font-size:13px;color:#555;'
+        f'<td style="padding:8px 12px;font-size:13px;color:{label_color};'
         f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">{label}</td>'
-        f'<td style="padding:8px 12px;font-size:13px;font-weight:600;color:#1a1a1a;text-align:right;'
+        f'<td style="padding:8px 12px;font-size:13px;font-weight:600;color:{color};text-align:right;'
         f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">'
         f'{value}{delta_html}{sub_td}</td>'
         f'</tr>'
@@ -342,8 +343,9 @@ def build_weekly_report(week_start: date | None = None) -> tuple[Path, str]:
     style="background:#f8f8f8;border-radius:10px;margin-bottom:4px">
     {_stat_row("Electricity savings", f"${elec_sav:.2f}", d_elec,
                f"{min(produced, consumed):.1f} kWh covered × ${cfg['pseg_rate']:.3f}")}
-    {_stat_row("SREC income", f"${srec_earned:.2f}", d_srec,
-               f"{produced/1000:.3f} MWh × ${cfg['srec_rate']:.2f}")}
+    {_stat_row("SREC preview (pending)", f"${srec_earned:.2f}", "",
+               f"{produced/1000:.3f} MWh × ${cfg['srec_rate']:.2f} — not counted until approved",
+               color="#aaaaaa", label_color="#aaaaaa")}
     {_stat_row("Total value", f"${total_val:.2f}", d_total)}
   </table>
 
