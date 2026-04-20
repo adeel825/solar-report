@@ -24,11 +24,27 @@ Sent every morning at 5am covering the previous day.
   - Break-even progress
   - **Net metering bank** — cumulative kWh and dollar value banked since PTO, with days-of-coverage estimate
 
-### Weekly & Monthly Reports
-- **Headline summary** — one-sentence weekly digest with week-over-week comparison and next-week weather forecast
-- Week-over-week and month-over-month change indicators
+### Weekly Report
+
+![Weekly solar report](docs/screenshot-weekly.png)
+
+- **Headline summary** — one-sentence digest with week-over-week comparison and next-week weather forecast
+- Sparkline bar chart of daily production
+- Week totals vs previous week with change indicators
+- Financial value with SREC preview greyed out
+- Break-even progress
 - Day-by-day breakdown table
-- Sparkline bar charts
+
+### Monthly Report
+
+![Monthly solar report](docs/screenshot-monthly.png)
+
+- Production vs monthly target progress bar
+- Year-to-date vs annual target
+- Month totals vs previous month with change indicators
+- Financial value with SREC preview greyed out
+- Break-even progress with projected payoff date
+- Week-by-week breakdown table
 - All periods clamped to PTO date — no pre-solar zeroes skew the data
 
 ### Break-Even Projection
