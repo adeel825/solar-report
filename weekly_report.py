@@ -411,6 +411,5 @@ def send_weekly(week_start: date | None = None):
 if __name__ == "__main__":
     # Optional: pass a Monday date as YYYY-MM-DD, otherwise defaults to last full week
     ws = date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else None
-    path, subj = build_weekly_report(ws)
+    path = send_weekly(ws)
     print(f"Report: {path}")
-    print(f"Subject: {subj}")

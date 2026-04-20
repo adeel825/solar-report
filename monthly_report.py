@@ -318,6 +318,5 @@ if __name__ == "__main__":
         y, m = int(sys.argv[1]), int(sys.argv[2])
     else:
         y, m = None, None
-    path, subj = build_monthly_report(y, m)
+    path = send_monthly(y, m)
     print(f"Report: {path}")
-    print(f"Subject: {subj}")
