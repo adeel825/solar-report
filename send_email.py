@@ -40,7 +40,12 @@ def send(target_date: str | None = None):
     srec      = row["srec_earned"]
     total     = row["total_value"]
 
-    subject = f"Solar Report \u2014 {email_builder._fmt_date(target_date)}  |  {produced:.1f} kWh  /  ${total:.2f}"
+    month        = date.fromisoformat(target_date).month
+    daily_target = email_builder.MONTHLY_TARGETS[month] / 30
+    ratio        = produced / daily_target if daily_target else 0
+    dot          = "🟢" if ratio >= 0.90 else "🟡" if ratio >= 0.70 else "🟠" if ratio >= 0.45 else "🔴"
+
+    subject = f"{dot} Solar Report \u2014 {email_builder._fmt_date(target_date)}  |  {produced:.1f} kWh  /  ${total:.2f}"
     html_body = email_builder.build_email(target_date)
 
     resend.api_key = cfg["resend_api_key"]

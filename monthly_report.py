@@ -286,8 +286,10 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
     out_path = REPORTS_DIR / f"month-{year}-{month:02d}.html"
     out_path.write_text(html, encoding="utf-8")
 
+    ratio   = produced / m_target if m_target else 0
+    dot     = "🟢" if ratio >= 0.90 else "🟡" if ratio >= 0.70 else "🟠" if ratio >= 0.45 else "🔴"
     subject = (
-        f"Monthly Solar — {month_name} {year}  |  "
+        f"{dot} Monthly Solar — {month_name} {year}  |  "
         f"{produced:.1f} kWh  /  ${total_val:.2f}"
     )
     return out_path, subject
