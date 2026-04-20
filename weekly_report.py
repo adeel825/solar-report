@@ -382,8 +382,10 @@ def build_weekly_report(week_start: date | None = None) -> tuple[Path, str]:
     out_path = REPORTS_DIR / f"week-{start_str}.html"
     out_path.write_text(html, encoding="utf-8")
 
+    ratio   = (produced / days_count) / daily_tgt if daily_tgt and days_count else 0
+    dot     = "🟢" if ratio >= 0.90 else "🟡" if ratio >= 0.70 else "🟠" if ratio >= 0.45 else "🔴"
     subject = (
-        f"Weekly Solar — {week_label}  |  "
+        f"{dot} Weekly Solar — {week_label}  |  "
         f"{produced:.1f} kWh  /  ${total_val:.2f}"
     )
     return out_path, subject
