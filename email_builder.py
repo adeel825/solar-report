@@ -139,9 +139,10 @@ def _fetch_forecast(d: str, lat: float, lon: float) -> dict | None:
     return None
 
 
-def _headline_daily(produced: float, prev, weather, forecast, daily_target: float) -> str:
+def _headline_daily(produced: float, prev, weather, forecast, daily_target: float,
+                    rank: int = 0, rank_total: int = 0) -> str:
     """Build a punchy one-sentence headline for the daily email."""
-    # Rating opener
+    # Rating opener — overridden below if rank == 1
     ratio = produced / daily_target if daily_target else 0
     if ratio >= 0.90:
         opener = "Excellent day"
@@ -204,7 +205,17 @@ def _headline_daily(produced: float, prev, weather, forecast, daily_target: floa
         else:
             tmrw_part = f" — {forecast['emoji']} {forecast['desc'].lower()} tomorrow ({hi}°F)."
 
-    return f"{opener} — {produced:.1f} kWh{wx_part}{delta_part}{tmrw_part}"
+    rank_part = ""
+    if rank and rank_total:
+        if rank == 1:
+            opener = "🏆 New record"
+        elif rank == rank_total:
+            rank_part = " (lowest day yet)"
+        else:
+            pct = round(rank / rank_total * 100)
+            rank_part = f" (top {pct}%)"
+
+    return f"{opener} — {produced:.1f} kWh{rank_part}{wx_part}{delta_part}{tmrw_part}"
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
@@ -413,19 +424,29 @@ def build_email(target_date: str) -> str:
     else:
         rating, rating_color = "POOR", C_RED
 
-    # Headline summary
-    headline = _headline_daily(produced, prev, weather, forecast, daily_target)
-
-    # Historical context line
+    # Historical context line + rank
     conn = database.get_conn()
     hist = conn.execute(
         "SELECT AVG(produced) as avg, MAX(produced) as best, COUNT(*) as cnt "
         "FROM daily_readings WHERE date < ?", (d,)
     ).fetchone()
+    rank_row = conn.execute(
+        "SELECT COUNT(*) as total, SUM(CASE WHEN produced > ? THEN 1 ELSE 0 END) as above "
+        "FROM daily_readings WHERE date <= ?",
+        (produced, d)
+    ).fetchone()
     conn.close()
     hist_line = ""
     if hist and hist["cnt"] and hist["cnt"] > 0:
         hist_line = f" &nbsp;·&nbsp; Avg {hist['avg']:.1f} kWh ({hist['cnt']}d) &nbsp;·&nbsp; Best {hist['best']:.1f} kWh"
+
+    rank, rank_total = 0, 0
+    if rank_row and rank_row["total"]:
+        rank_total = rank_row["total"]
+        rank       = (rank_row["above"] or 0) + 1
+
+    # Headline summary
+    headline = _headline_daily(produced, prev, weather, forecast, daily_target, rank, rank_total)
 
     # ------------------------------------------------------------------ #
     # Flow row cells
