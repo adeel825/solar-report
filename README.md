@@ -11,7 +11,7 @@ Sent every morning at 5am covering the previous day.
 
 ![Daily email report](docs/screenshot-email.png)
 
-- **Headline summary** — punchy one-sentence digest: today's rating + weather context + % change vs yesterday + tomorrow's forecast (e.g. *"Tough day — 13.8 kWh in rainy conditions (52°F), down 79% from yesterday's 66.1 kWh — ☁️ overcast forecast tomorrow (50°F) will cap output."*)
+- **Headline summary** — punchy one-sentence digest: today's rating + all-time percentile + weather context + % change vs yesterday + tomorrow's forecast (e.g. *"Excellent day — 66.3 kWh (top 27%) under clear skies (75°F), up 251% from yesterday's 18.9 kWh — ☀️ clear skies tomorrow (74°F) should bring strong output."*)
 - **Weather** — daily high/low and conditions in the top-right corner (Open-Meteo, no key required)
 - **Performance meter** — colour-banded gauge rating production as Poor / Fair / Good / Excellent vs. monthly daily target
 - **Energy flow** — produced vs. consumed with net export/import
