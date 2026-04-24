@@ -142,7 +142,7 @@ def _fetch_forecast(d: str, lat: float, lon: float) -> dict | None:
 def _headline_daily(produced: float, prev, weather, forecast, daily_target: float,
                     rank: int = 0, rank_total: int = 0) -> str:
     """Build a punchy one-sentence headline for the daily email."""
-    # Rating opener
+    # Rating opener — overridden below if rank == 1
     ratio = produced / daily_target if daily_target else 0
     if ratio >= 0.90:
         opener = "Excellent day"
@@ -208,7 +208,7 @@ def _headline_daily(produced: float, prev, weather, forecast, daily_target: floa
     rank_part = ""
     if rank and rank_total:
         if rank == 1:
-            rank_part = " (🏆 best day yet)"
+            opener = "🏆 New record"
         elif rank == rank_total:
             rank_part = " (lowest day yet)"
         else:
