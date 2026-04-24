@@ -38,11 +38,14 @@ _WMO_DESC = {
 
 
 def _fetch_weather(d: str, lat: float, lon: float) -> dict | None:
-    """Fetch daily high/low temp (°F) and WMO weather code from Open-Meteo."""
-    params = dict(
+    """Fetch weather for solar hours (8am–6pm) to avoid overnight conditions
+    skewing the description. Uses mode of hourly WMO codes during daylight;
+    high/low from full-day daily data."""
+    hourly_params = dict(
         latitude=lat, longitude=lon,
         start_date=d, end_date=d,
-        daily="temperature_2m_max,temperature_2m_min,weathercode",
+        hourly="weathercode,temperature_2m",
+        daily="temperature_2m_max,temperature_2m_min",
         temperature_unit="fahrenheit",
         timezone="America/New_York",
     )
@@ -51,51 +54,86 @@ def _fetch_weather(d: str, lat: float, lon: float) -> dict | None:
         "https://api.open-meteo.com/v1/forecast",
     ]:
         try:
-            r = requests.get(url, params=params, timeout=6)
-            if r.ok:
-                daily = r.json().get("daily", {})
-                codes = daily.get("weathercode") or daily.get("weather_code", [])
-                highs = daily.get("temperature_2m_max", [])
-                lows  = daily.get("temperature_2m_min", [])
-                if codes and highs and lows:
-                    code = int(codes[0])
-                    return {
-                        "code":  code,
-                        "emoji": _WMO_EMOJI.get(code, "🌡️"),
-                        "desc":  _WMO_DESC.get(code, ""),
-                        "high":  round(highs[0]),
-                        "low":   round(lows[0]),
-                    }
+            r = requests.get(url, params=hourly_params, timeout=6)
+            if not r.ok:
+                continue
+            data   = r.json()
+            hourly = data.get("hourly", {})
+            daily  = data.get("daily", {})
+
+            times  = hourly.get("time", [])
+            codes  = hourly.get("weathercode") or hourly.get("weather_code", [])
+            highs  = daily.get("temperature_2m_max", [])
+            lows   = daily.get("temperature_2m_min", [])
+
+            if not (times and codes and highs and lows):
+                continue
+
+            # Filter to peak solar hours 09:00–14:00 — when the sun is
+            # highest and panels produce the most. Avoids overnight or
+            # late-afternoon conditions skewing the description.
+            solar_codes = [
+                int(c) for t, c in zip(times, codes)
+                if c is not None and 9 <= int(t.split("T")[1][:2]) <= 14
+            ]
+            if not solar_codes:
+                solar_codes = [int(c) for c in codes if c is not None]
+
+            # Dominant (mode) code during solar hours
+            from statistics import mode
+            code = mode(solar_codes)
+
+            return {
+                "code":  code,
+                "emoji": _WMO_EMOJI.get(code, "🌡️"),
+                "desc":  _WMO_DESC.get(code, ""),
+                "high":  round(highs[0]),
+                "low":   round(lows[0]),
+            }
         except Exception:
             pass
     return None
 
 
 def _fetch_forecast(d: str, lat: float, lon: float) -> dict | None:
-    """Fetch forecast for a future date from Open-Meteo forecast API."""
+    """Fetch forecast for a future date using peak solar hours (9am–2pm)
+    to avoid overnight or late-evening conditions skewing the prediction."""
     params = dict(
         latitude=lat, longitude=lon,
         start_date=d, end_date=d,
-        daily="temperature_2m_max,temperature_2m_min,weathercode",
+        hourly="weathercode",
+        daily="temperature_2m_max,temperature_2m_min",
         temperature_unit="fahrenheit",
         timezone="America/New_York",
     )
     try:
         r = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=6)
         if r.ok:
-            daily = r.json().get("daily", {})
-            codes = daily.get("weathercode") or daily.get("weather_code", [])
-            highs = daily.get("temperature_2m_max", [])
-            lows  = daily.get("temperature_2m_min", [])
-            if codes and highs and lows:
-                code = int(codes[0])
-                return {
-                    "code":  code,
-                    "emoji": _WMO_EMOJI.get(code, "🌡️"),
-                    "desc":  _WMO_DESC.get(code, ""),
-                    "high":  round(highs[0]),
-                    "low":   round(lows[0]),
-                }
+            data   = r.json()
+            hourly = data.get("hourly", {})
+            daily  = data.get("daily", {})
+            times  = hourly.get("time", [])
+            codes  = hourly.get("weathercode") or hourly.get("weather_code", [])
+            highs  = daily.get("temperature_2m_max", [])
+            lows   = daily.get("temperature_2m_min", [])
+            if not (times and codes and highs and lows):
+                return None
+            # Peak solar hours only
+            solar_codes = [
+                int(c) for t, c in zip(times, codes)
+                if c is not None and 9 <= int(t.split("T")[1][:2]) <= 14
+            ]
+            if not solar_codes:
+                solar_codes = [int(c) for c in codes if c is not None]
+            from statistics import mode
+            code = mode(solar_codes)
+            return {
+                "code":  code,
+                "emoji": _WMO_EMOJI.get(code, "🌡️"),
+                "desc":  _WMO_DESC.get(code, ""),
+                "high":  round(highs[0]),
+                "low":   round(lows[0]),
+            }
     except Exception:
         pass
     return None
