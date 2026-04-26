@@ -143,74 +143,7 @@ def _fetch_forecast(d: str, lat: float, lon: float) -> dict | None:
     return None
 
 
-_CLOUD_PENALTY = 0.75
 
-
-def _forecast_production(cloud_pct: float | None) -> tuple[float, float, float]:
-    """Return (low_est, mid_est, high_est) kWh given cloud cover %."""
-    if cloud_pct is None:
-        return (None, None, None)
-    factor  = max(0.10, 1.0 - _CLOUD_PENALTY * (cloud_pct / 100.0))
-    mid     = round(SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS * factor, 1)
-    low     = round(mid * 0.85, 1)
-    high    = round(min(mid * 1.15, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS), 1)
-    return (low, mid, high)
-
-
-def _tomorrow_section_html(forecast: dict | None, pseg_rate: float, forecast_date: str) -> str:
-    if forecast is None:
-        return ""
-    cloud_pct  = forecast.get("cloud_pct")
-    precip_pct = forecast.get("precip_pct") or 0
-    low, mid, high = _forecast_production(cloud_pct)
-
-    if low is None:
-        prod_line = "—"
-        savings_line = "—"
-    else:
-        prod_line    = f"{low}–{high} kWh (mid {mid:.1f} kWh ± 15%)"
-        low_val  = round(low  * pseg_rate, 2)
-        high_val = round(high * pseg_rate, 2)
-        savings_line = f"${low_val:.2f}–${high_val:.2f} at ${pseg_rate:.4f}/kWh"
-
-    cloud_line = f"{cloud_pct}% cloud cover" if cloud_pct is not None else ""
-    precip_line = f" · {precip_pct}% chance of rain" if precip_pct >= 20 else ""
-
-    # Outlook colour matches the WMO-based rating in weather.py
-    code = forecast["code"]
-    if code in (0, 1):
-        outlook, color = "GOOD", C_GREEN
-    elif code in (2, 3, 45, 48):
-        outlook, color = "FAIR", C_AMBER
-    else:
-        outlook, color = "POOR", C_RED
-
-    return f"""
-  <!-- Tomorrow's outlook -->
-  <p style="margin:20px 0 8px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:#999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">Tomorrow's outlook — {forecast_date}</p>
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{C_BG};border-radius:10px;margin-bottom:4px">
-    <tr><td style="padding:14px 16px">
-      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:10px">
-        <tr>
-          <td style="font-size:13px;font-weight:600;color:#555;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">{forecast['emoji']} {forecast['desc']} · {forecast['high']}°F{f' · {cloud_line}{precip_line}' if cloud_line else ''}</td>
-          <td align="right" style="font-size:14px;font-weight:700;color:{color};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">{outlook}</td>
-        </tr>
-      </table>
-      <table width="100%" cellpadding="0" cellspacing="0" border="0">
-        <tr>
-          <td width="49%" style="background:white;border-radius:8px;padding:10px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-            <div style="font-size:10px;color:#999;margin-bottom:3px">Est. production</div>
-            <div style="font-size:14px;font-weight:600;color:#1a1a1a">{prod_line}</div>
-          </td>
-          <td width="2%"></td>
-          <td width="49%" style="background:white;border-radius:8px;padding:10px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-            <div style="font-size:10px;color:#999;margin-bottom:3px">Est. savings</div>
-            <div style="font-size:14px;font-weight:600;color:{C_GREEN}">{savings_line}</div>
-          </td>
-        </tr>
-      </table>
-    </td></tr>
-  </table>"""
 
 
 def _headline_daily(produced: float, prev, weather, forecast, daily_target: float,
@@ -422,6 +355,7 @@ def build_email(target_date: str) -> str:
     exported     = row["exported"]
     net          = row["net"]
     electricity_savings    = row["electricity_savings"]
+    srec_earned  = row["srec_earned"]
     total_value  = row["total_value"]
     monthly_kwh  = cum["monthly_kwh"]
 
@@ -660,6 +594,7 @@ def build_email(target_date: str) -> str:
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:4px">
     <tr>
       {_card("Electricity savings", f"${electricity_savings:.2f}{_delta(electricity_savings, 'electricity_savings', '', '.2f')}", f"{min(produced, consumed):.2f} kWh \u00d7 ${cfg['pseg_rate']:.3f}", C_GREEN)}
+      {_card("SREC preview (pending)", f"${srec_earned:.2f}", "not counted until approved", C_GREY)}
       {_card("Total value", f"${total_value:.2f}{_delta(total_value, 'total_value', '', '.2f')}", "electricity savings only", C_GREEN)}
     </tr>
   </table>
@@ -715,7 +650,6 @@ def build_email(target_date: str) -> str:
     </tr>
   </table>
 
-  {_tomorrow_section_html(forecast, cfg["pseg_rate"], tomorrow_str)}
 
 </td></tr>
 </table>

@@ -314,48 +314,7 @@ def _yby_rows(year_by_year: list, net_cost: float) -> str:
     return "\n".join(rows)
 
 
-def _tomorrow_section_html(forecast: dict | None, pseg_rate: float) -> str:
-    if forecast is None:
-        return ""
-
-    low_val  = round(forecast["low_est"]  * pseg_rate, 2)
-    high_val = round(forecast["high_est"] * pseg_rate, 2)
-    color    = forecast["color"]
-    outlook  = forecast["outlook"].upper()
-
-    precip_note = (
-        f' · {forecast["precip_pct"]:.0f}% chance of rain' if forecast["precip_pct"] >= 20 else ""
-    )
-
-    return f"""
-  <div class="divider"></div>
-  <div class="section">Tomorrow's outlook</div>
-  <div class="perf-meter">
-    <div class="perf-header">
-      <span class="perf-section-lbl">{forecast["date"]}</span>
-      <span class="perf-rating" style="color:{color}">{outlook}</span>
-    </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
-      <div style="flex:1;min-width:120px;background:white;border-radius:8px;padding:10px 12px">
-        <div style="font-size:11px;color:#999;margin-bottom:3px">Conditions</div>
-        <div style="font-size:15px;font-weight:600;color:{color}">{forecast["condition"]}</div>
-        <div style="font-size:11px;color:#888;margin-top:2px">{forecast["temp_f"]}°F · {forecast["cloud_pct"]:.0f}% cloud cover{precip_note}</div>
-      </div>
-      <div style="flex:1;min-width:120px;background:white;border-radius:8px;padding:10px 12px">
-        <div style="font-size:11px;color:#999;margin-bottom:3px">Est. production</div>
-        <div style="font-size:15px;font-weight:600">{forecast["low_est"]}–{forecast["high_est"]} kWh</div>
-        <div style="font-size:11px;color:#888;margin-top:2px">midpoint {forecast["mid_est"]:.1f} kWh · ±15%</div>
-      </div>
-      <div style="flex:1;min-width:120px;background:white;border-radius:8px;padding:10px 12px">
-        <div style="font-size:11px;color:#999;margin-bottom:3px">Est. savings</div>
-        <div style="font-size:15px;font-weight:600;color:#1D9E75">${low_val:.2f}–${high_val:.2f}</div>
-        <div style="font-size:11px;color:#888;margin-top:2px">at ${pseg_rate:.4f}/kWh</div>
-      </div>
-    </div>
-  </div>"""
-
-
-def build_report(target_date: str, tomorrow_forecast: dict | None = None) -> Path:
+def build_report(target_date: str) -> Path:
     cfg = load_config()
     row = database.get_reading(target_date)
     if row is None:
@@ -407,7 +366,6 @@ def build_report(target_date: str, tomorrow_forecast: dict | None = None) -> Pat
     spring_days = round(banked_kwh / SPRING_DRAW) if banked_kwh > 0 else 0
     summer_days = round(banked_kwh / SUMMER_DRAW) if banked_kwh > 0 else 0
 
-    tomorrow_html = _tomorrow_section_html(tomorrow_forecast, cfg["pseg_rate"])
     insights = _insights(row, cum, cfg, monthly_target)
     insight_rows = "\n".join(
         f'    <div class="insight-row"><div class="dot" style="background:{color}"></div><div>{text}</div></div>'
@@ -587,8 +545,6 @@ def build_report(target_date: str, tomorrow_forecast: dict | None = None) -> Pat
       </div>
     </div>
   </div>
-
-{tomorrow_html}
 
   <div class="divider"></div>
 
