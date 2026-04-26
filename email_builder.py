@@ -190,27 +190,39 @@ def _headline_daily(produced: float, prev, weather, forecast, daily_target: floa
             direction = "up" if diff > 0 else "down"
             delta_part = f", {direction} {pct}% from yesterday's {prev['produced']:.1f} kWh"
 
-    # Tomorrow's forecast
+    # Tomorrow's forecast + production estimate
     tmrw_part = ""
     if forecast:
-        code = forecast["code"]
-        hi = forecast["high"]
+        code      = forecast["code"]
+        hi        = forecast["high"]
+        cloud_pct = forecast.get("cloud_pct")
+
+        # kWh range from cloud cover (±15% band around cloud-adjusted mid)
+        est_str = ""
+        if cloud_pct is not None:
+            _max = SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS          # 89.6 kWh
+            factor = max(0.10, 1.0 - 0.75 * (cloud_pct / 100))
+            mid    = _max * factor
+            low    = round(mid * 0.85)
+            high   = round(min(mid * 1.15, _max))
+            est_str = f", est. {low}–{high} kWh"
+
         if code == 0:
-            tmrw_part = f" — {forecast['emoji']} clear skies tomorrow ({hi}°F) should bring strong output."
+            tmrw_part = f" — {forecast['emoji']} Clear skies tomorrow ({hi}°F){est_str}."
         elif code in (1, 2):
-            tmrw_part = f" — {forecast['emoji']} partly cloudy tomorrow ({hi}°F), moderate production likely."
+            tmrw_part = f" — {forecast['emoji']} Partly cloudy tomorrow ({hi}°F){est_str}."
         elif code == 3:
-            tmrw_part = f" — {forecast['emoji']} overcast forecast tomorrow ({hi}°F) will cap output."
+            tmrw_part = f" — {forecast['emoji']} Overcast tomorrow ({hi}°F){est_str}."
         elif code in (45, 48):
-            tmrw_part = f" — {forecast['emoji']} foggy tomorrow ({hi}°F), expect reduced production."
+            tmrw_part = f" — {forecast['emoji']} Foggy tomorrow ({hi}°F){est_str}."
         elif code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82):
-            tmrw_part = f" — {forecast['emoji']} rain in the forecast tomorrow ({hi}°F), expect a low-output day."
+            tmrw_part = f" — {forecast['emoji']} Rain tomorrow ({hi}°F){est_str}."
         elif code in (71, 73, 75, 77, 85, 86):
-            tmrw_part = f" — {forecast['emoji']} snow tomorrow ({hi}°F), minimal output expected."
+            tmrw_part = f" — {forecast['emoji']} Snow tomorrow ({hi}°F){est_str}."
         elif code in (95, 96, 99):
-            tmrw_part = f" — {forecast['emoji']} storms tomorrow ({hi}°F), output will be very low."
+            tmrw_part = f" — {forecast['emoji']} Storms tomorrow ({hi}°F){est_str}."
         else:
-            tmrw_part = f" — {forecast['emoji']} {forecast['desc'].lower()} tomorrow ({hi}°F)."
+            tmrw_part = f" — {forecast['emoji']} {forecast['desc']} tomorrow ({hi}°F){est_str}."
 
     rank_part = ""
     if rank and rank_total:
