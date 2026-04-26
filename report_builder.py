@@ -274,7 +274,6 @@ def _insights(row: dict, cum: dict, cfg: dict, monthly_target: int) -> list[tupl
     items = []
     produced = row["produced"]
     net = row["net"]
-    srec_progress = cum["srec_progress_kwh"]
     monthly_kwh = cum["monthly_kwh"]
 
     perf_pct = _pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
@@ -330,13 +329,11 @@ def build_report(target_date: str) -> Path:
     imported  = row["imported"]
     exported  = row["exported"]
     net       = row["net"]
-    srec_earned         = row["srec_earned"]
     electricity_savings = row["electricity_savings"]
     self_consumed       = row["self_consumed"]
     total_value         = row["total_value"]
 
     monthly_kwh  = cum["monthly_kwh"]
-    srec_progress = cum["srec_progress_kwh"]
 
     month = date.fromisoformat(d).month
     monthly_target = MONTHLY_TARGETS[month]
@@ -351,24 +348,23 @@ def build_report(target_date: str) -> Path:
     perf        = _perf_meter(d, produced, monthly_target)
     be          = _break_even(cfg, d)
 
-    srec_pct      = _pct(srec_progress, 1000)
     mtd_pct       = _pct(monthly_kwh, monthly_target)
     perf_pct      = _pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
-    srec_days_left = math.ceil((1000 - srec_progress) / produced) if produced > 0 else "?"
 
-    # Net metering bank since PTO
-    BANK_TARGET = 500  # kWh — roughly one peak summer month of net grid draw
+    # Net metering bank since PTO — seasonal day-coverage
+    WINTER_DRAW = 19.0   # kWh/day — PSE&G bill Jan–Feb average
+    SPRING_DRAW = 22.7   # kWh/day — PSE&G bill Mar–May average
+    SUMMER_DRAW = 52.0   # kWh/day — PSE&G bill Jun–Aug peak
     bank_conn = database.get_conn()
     bank_row = bank_conn.execute(
-        "SELECT SUM(net) as banked_kwh, AVG(consumed) as avg_consumed "
+        "SELECT SUM(net) as banked_kwh "
         "FROM daily_readings WHERE date >= ?", (PTO_DATE,)
     ).fetchone()
     bank_conn.close()
-    banked_kwh   = bank_row["banked_kwh"] or 0.0
-    avg_consumed = bank_row["avg_consumed"] or 1.0
-    bank_value   = round(banked_kwh * cfg["pseg_rate"], 2)
-    days_covered = round(banked_kwh / avg_consumed, 1) if banked_kwh > 0 else 0
-    bank_pct     = _pct(banked_kwh, BANK_TARGET)
+    banked_kwh  = bank_row["banked_kwh"] or 0.0
+    winter_days = round(banked_kwh / WINTER_DRAW) if banked_kwh > 0 else 0
+    spring_days = round(banked_kwh / SPRING_DRAW) if banked_kwh > 0 else 0
+    summer_days = round(banked_kwh / SUMMER_DRAW) if banked_kwh > 0 else 0
 
     insights = _insights(row, cum, cfg, monthly_target)
     insight_rows = "\n".join(
@@ -411,13 +407,6 @@ def build_report(target_date: str) -> Path:
   .bar-label {{ display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: #444; }}
   .bar-track {{ background: #e8e8e8; border-radius: 4px; height: 8px; }}
   .bar-fill {{ height: 8px; border-radius: 4px; }}
-  .srec-card {{ background: #f8f8f8; border-radius: 10px; padding: 14px; margin-bottom: 12px; }}
-  .srec-top {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }}
-  .srec-title {{ font-size: 11px; color: #666; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }}
-  .srec-val {{ font-size: 13px; font-weight: 600; color: #1D9E75; }}
-  .srec-track {{ background: #e8e8e8; border-radius: 6px; height: 12px; overflow: hidden; }}
-  .srec-fill {{ height: 12px; border-radius: 6px; background: #1D9E75; }}
-  .srec-labels {{ display: flex; justify-content: space-between; font-size: 11px; color: #999; margin-top: 5px; }}
   .divider {{ border: none; border-top: 1px solid #eee; margin: 20px 0; }}
   .insights {{ background: #f8f8f8; border-radius: 12px; padding: 14px; }}
   .insight-row {{ display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-bottom: 1px solid #eee; font-size: 13px; color: #555; line-height: 1.5; }}
@@ -536,9 +525,25 @@ def build_report(target_date: str) -> Path:
     <div class="bar-label"><span>Break-even progress — ${cfg['net_cost']:,} installation cost</span><span><strong>{be['pct_paid']:.2f}%</strong> — ${be['total_earned']:,.2f} / ${cfg['net_cost']:,}</span></div>
     <div class="bar-track"><div class="bar-fill" style="width:{be['pct_paid']}%;background:#9B59B6"></div></div>
   </div>
-  <div class="bar-wrap">
-    <div class="bar-label"><span>Net metering bank since PTO</span><span><strong>{banked_kwh:.1f} kWh</strong> &nbsp;·&nbsp; ${bank_value:.2f} &nbsp;·&nbsp; ~{days_covered:.0f} days coverage</span></div>
-    <div class="bar-track"><div class="bar-fill" style="width:{bank_pct}%;background:#378ADD"></div></div>
+  <div style="margin-bottom:12px">
+    <div class="bar-label" style="margin-bottom:8px"><span style="font-weight:600">Net metering bank</span><span style="color:#378ADD;font-weight:700">{banked_kwh:.1f} kWh banked since PTO</span></div>
+    <div style="display:flex;gap:8px">
+      <div style="flex:1;background:#f0f4ff;border-radius:8px;padding:10px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+        <div style="font-size:10px;color:#666;margin-bottom:3px">❄️ Winter day</div>
+        <div style="font-size:18px;font-weight:700;color:#378ADD">~{winter_days} days</div>
+        <div style="font-size:10px;color:#999">at {WINTER_DRAW} kWh/day draw</div>
+      </div>
+      <div style="flex:1;background:#f0f4ff;border-radius:8px;padding:10px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+        <div style="font-size:10px;color:#666;margin-bottom:3px">🌸 Spring day</div>
+        <div style="font-size:18px;font-weight:700;color:#378ADD">~{spring_days} days</div>
+        <div style="font-size:10px;color:#999">at {SPRING_DRAW} kWh/day draw</div>
+      </div>
+      <div style="flex:1;background:#fff8ed;border-radius:8px;padding:10px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+        <div style="font-size:10px;color:#666;margin-bottom:3px">☀️ Summer day</div>
+        <div style="font-size:18px;font-weight:700;color:#EF9F27">~{summer_days} days</div>
+        <div style="font-size:10px;color:#999">at {SUMMER_DRAW} kWh/day draw</div>
+      </div>
+    </div>
   </div>
 
   <div class="divider"></div>
