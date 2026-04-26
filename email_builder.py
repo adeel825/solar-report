@@ -347,11 +347,9 @@ def build_email(target_date: str) -> str:
     imported     = row["imported"]
     exported     = row["exported"]
     net          = row["net"]
-    srec_earned  = row["srec_earned"]
     electricity_savings    = row["electricity_savings"]
     total_value  = row["total_value"]
     monthly_kwh  = cum["monthly_kwh"]
-    srec_progress = cum["srec_progress_kwh"]
 
     month          = date.fromisoformat(d).month
     monthly_target = MONTHLY_TARGETS[month]
@@ -360,19 +358,20 @@ def build_email(target_date: str) -> str:
     pto_label      = _pto_duration(d)
     be             = _break_even(cfg, d)
 
-    # Net metering bank since PTO
-    BANK_TARGET  = 500  # kWh — roughly one peak summer month
+    # Net metering bank since PTO — seasonal day-coverage
+    WINTER_DRAW = 19.0   # kWh/day — PSE&G bill Jan–Feb average
+    SPRING_DRAW = 22.7   # kWh/day — PSE&G bill Mar–May average
+    SUMMER_DRAW = 52.0   # kWh/day — PSE&G bill Jun–Aug peak
     _bc = database.get_conn()
     _br = _bc.execute(
-        "SELECT SUM(net) as banked_kwh, AVG(consumed) as avg_consumed "
+        "SELECT SUM(net) as banked_kwh "
         "FROM daily_readings WHERE date >= ?", (PTO_DATE,)
     ).fetchone()
     _bc.close()
-    banked_kwh   = _br["banked_kwh"] or 0.0
-    avg_consumed = _br["avg_consumed"] or 1.0
-    bank_value   = round(banked_kwh * cfg["pseg_rate"], 2)
-    days_covered = round(banked_kwh / avg_consumed, 1) if banked_kwh > 0 else 0
-    bank_pct     = _pct(banked_kwh, BANK_TARGET)
+    banked_kwh  = _br["banked_kwh"] or 0.0
+    winter_days = round(banked_kwh / WINTER_DRAW) if banked_kwh > 0 else 0
+    spring_days = round(banked_kwh / SPRING_DRAW) if banked_kwh > 0 else 0
+    summer_days = round(banked_kwh / SUMMER_DRAW) if banked_kwh > 0 else 0
 
     # Weather — silently skipped if API unavailable
     _lat = cfg.get("latitude")
@@ -404,11 +403,9 @@ def build_email(target_date: str) -> str:
             f'{arrow} {diff:+{fmt}}{unit}</span>'
         )
 
-    srec_pct   = _pct(srec_progress, 1000)
     mtd_pct    = _pct(monthly_kwh, monthly_target)
     perf_pct   = _pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
     be_pct     = be["pct_paid"]
-    srec_days_left = math.ceil((1000 - srec_progress) / produced) if produced > 0 else "?"
     net_sign  = "+" if net >= 0 else ""
     net_color = C_GREEN if net >= 0 else C_RED
 
@@ -589,7 +586,6 @@ def build_email(target_date: str) -> str:
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:4px">
     <tr>
       {_card("Electricity savings", f"${electricity_savings:.2f}{_delta(electricity_savings, 'electricity_savings', '', '.2f')}", f"{min(produced, consumed):.2f} kWh \u00d7 ${cfg['pseg_rate']:.3f}", C_GREEN)}
-      {_card("SREC preview (pending)", f"${srec_earned:.2f}", "not counted until approved", C_GREY)}
       {_card("Total value", f"${total_value:.2f}{_delta(total_value, 'total_value', '', '.2f')}", "electricity savings only", C_GREEN)}
     </tr>
   </table>
@@ -611,11 +607,39 @@ def build_email(target_date: str) -> str:
       f"{be_pct:.2f}% &mdash; ${be['total_earned']:,.2f} / ${cfg['net_cost']:,}",
       be_pct, C_PURPLE
   )}
-  {bar_row(
-      "Net metering bank since PTO",
-      f"{banked_kwh:.1f} kWh &nbsp;&middot;&nbsp; ${bank_value:.2f} &nbsp;&middot;&nbsp; ~{days_covered:.0f} days coverage",
-      bank_pct, C_BLUE
-  )}
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:12px">
+    <tr>
+      <td style="padding-bottom:6px">
+        <span style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:#999">Net metering bank since PTO</span>
+        &nbsp;&nbsp;<span style="font-size:13px;font-weight:700;color:#378ADD">{banked_kwh:.1f} kWh banked</span>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td width="33%" style="background:#f0f4ff;border-radius:8px;padding:10px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+              <div style="font-size:10px;color:#666;margin-bottom:3px">❄️ Winter day</div>
+              <div style="font-size:18px;font-weight:700;color:#378ADD">~{winter_days} days</div>
+              <div style="font-size:10px;color:#999">at {WINTER_DRAW} kWh/day</div>
+            </td>
+            <td width="2%"></td>
+            <td width="33%" style="background:#f0f4ff;border-radius:8px;padding:10px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+              <div style="font-size:10px;color:#666;margin-bottom:3px">🌸 Spring day</div>
+              <div style="font-size:18px;font-weight:700;color:#378ADD">~{spring_days} days</div>
+              <div style="font-size:10px;color:#999">at {SPRING_DRAW} kWh/day</div>
+            </td>
+            <td width="2%"></td>
+            <td width="33%" style="background:#fff8ed;border-radius:8px;padding:10px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+              <div style="font-size:10px;color:#666;margin-bottom:3px">☀️ Summer day</div>
+              <div style="font-size:18px;font-weight:700;color:#EF9F27">~{summer_days} days</div>
+              <div style="font-size:10px;color:#999">at {SUMMER_DRAW} kWh/day</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
 
 </td></tr>
 </table>
