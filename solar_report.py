@@ -9,7 +9,6 @@ import database
 import enphase_api
 import report_builder
 import send_email
-import weather
 
 MONTHLY_TARGETS = {
     1: 800, 2: 870, 3: 1100, 4: 1260, 5: 1430,
@@ -77,9 +76,7 @@ def run(target_date: str | None = None):
     database.save_reading(reading)
 
     print("[3/4] Building HTML report...")
-    cfg = database.load_config()
-    forecast = weather.fetch_tomorrow_forecast(cfg["latitude"], cfg["longitude"], report_date=target_date)
-    report_path = report_builder.build_report(target_date, tomorrow_forecast=forecast)
+    report_path = report_builder.build_report(target_date)
     print(f"      -> {report_path}")
 
     print("[4/4] Sending email...")
