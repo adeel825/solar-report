@@ -8,233 +8,9 @@ import math
 from pathlib import Path
 from datetime import date, timedelta
 
-import requests
 import database
+import weather as _wx
 
-# WMO weather code → emoji
-_WMO_EMOJI = {
-    0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️",
-    45: "🌫️", 48: "🌫️",
-    51: "🌦️", 53: "🌦️", 55: "🌦️", 56: "🌦️", 57: "🌦️",
-    61: "🌧️", 63: "🌧️", 65: "🌧️", 66: "🌧️", 67: "🌧️",
-    71: "❄️", 73: "❄️", 75: "❄️", 77: "❄️",
-    80: "🌦️", 81: "🌦️", 82: "🌦️",
-    85: "🌨️", 86: "🌨️",
-    95: "⛈️", 96: "⛈️", 99: "⛈️",
-}
-
-_WMO_DESC = {
-    0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-    45: "Foggy", 48: "Foggy",
-    51: "Light drizzle", 53: "Drizzle", 55: "Heavy drizzle",
-    56: "Freezing drizzle", 57: "Heavy freezing drizzle",
-    61: "Light rain", 63: "Rain", 65: "Heavy rain",
-    66: "Freezing rain", 67: "Heavy freezing rain",
-    71: "Light snow", 73: "Snow", 75: "Heavy snow", 77: "Snow grains",
-    80: "Showers", 81: "Rain showers", 82: "Heavy showers",
-    85: "Snow showers", 86: "Heavy snow showers",
-    95: "Thunderstorm", 96: "Thunderstorm w/ hail", 99: "Thunderstorm w/ hail",
-}
-
-
-def _fetch_weather(d: str, lat: float, lon: float) -> dict | None:
-    """Fetch weather for solar hours (8am–6pm) to avoid overnight conditions
-    skewing the description. Uses mode of hourly WMO codes during daylight;
-    high/low from full-day daily data."""
-    hourly_params = dict(
-        latitude=lat, longitude=lon,
-        start_date=d, end_date=d,
-        hourly="weathercode,temperature_2m",
-        daily="temperature_2m_max,temperature_2m_min",
-        temperature_unit="fahrenheit",
-        timezone="America/New_York",
-    )
-    for url in [
-        "https://archive-api.open-meteo.com/v1/archive",
-        "https://api.open-meteo.com/v1/forecast",
-    ]:
-        try:
-            r = requests.get(url, params=hourly_params, timeout=6)
-            if not r.ok:
-                continue
-            data   = r.json()
-            hourly = data.get("hourly", {})
-            daily  = data.get("daily", {})
-
-            times  = hourly.get("time", [])
-            codes  = hourly.get("weathercode") or hourly.get("weather_code", [])
-            highs  = daily.get("temperature_2m_max", [])
-            lows   = daily.get("temperature_2m_min", [])
-
-            if not (times and codes and highs and lows):
-                continue
-
-            # Filter to peak solar hours 09:00–14:00 — when the sun is
-            # highest and panels produce the most. Avoids overnight or
-            # late-afternoon conditions skewing the description.
-            solar_codes = [
-                int(c) for t, c in zip(times, codes)
-                if c is not None and 9 <= int(t.split("T")[1][:2]) <= 14
-            ]
-            if not solar_codes:
-                solar_codes = [int(c) for c in codes if c is not None]
-
-            # Dominant (mode) code during solar hours
-            from statistics import mode
-            code = mode(solar_codes)
-
-            return {
-                "code":  code,
-                "emoji": _WMO_EMOJI.get(code, "🌡️"),
-                "desc":  _WMO_DESC.get(code, ""),
-                "high":  round(highs[0]),
-                "low":   round(lows[0]),
-            }
-        except Exception:
-            pass
-    return None
-
-
-def _fetch_forecast(d: str, lat: float, lon: float) -> dict | None:
-    """Fetch forecast for a future date using peak solar hours (9am–2pm)
-    to avoid overnight or late-evening conditions skewing the prediction."""
-    params = dict(
-        latitude=lat, longitude=lon,
-        start_date=d, end_date=d,
-        hourly="weathercode",
-        daily="temperature_2m_max,temperature_2m_min,cloud_cover_mean,precipitation_probability_max",
-        temperature_unit="fahrenheit",
-        timezone="America/New_York",
-    )
-    try:
-        r = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=6)
-        if r.ok:
-            data   = r.json()
-            hourly = data.get("hourly", {})
-            daily  = data.get("daily", {})
-            times  = hourly.get("time", [])
-            codes  = hourly.get("weathercode") or hourly.get("weather_code", [])
-            highs  = daily.get("temperature_2m_max", [])
-            lows   = daily.get("temperature_2m_min", [])
-            clouds = daily.get("cloud_cover_mean", [])
-            precip = daily.get("precipitation_probability_max", [])
-            if not (times and codes and highs and lows):
-                return None
-            # Peak solar hours only
-            solar_codes = [
-                int(c) for t, c in zip(times, codes)
-                if c is not None and 9 <= int(t.split("T")[1][:2]) <= 14
-            ]
-            if not solar_codes:
-                solar_codes = [int(c) for c in codes if c is not None]
-            from statistics import mode
-            code = mode(solar_codes)
-            return {
-                "code":       code,
-                "emoji":      _WMO_EMOJI.get(code, "🌡️"),
-                "desc":       _WMO_DESC.get(code, ""),
-                "high":       round(highs[0]),
-                "low":        round(lows[0]),
-                "cloud_pct":  round(clouds[0]) if clouds else None,
-                "precip_pct": round(precip[0]) if precip else None,
-            }
-    except Exception:
-        pass
-    return None
-
-
-
-
-
-def _headline_daily(produced: float, prev, weather, forecast, daily_target: float,
-                    rank: int = 0, rank_total: int = 0) -> str:
-    """Build a punchy one-sentence headline for the daily email."""
-    # Rating opener — overridden below if rank == 1
-    ratio = produced / daily_target if daily_target else 0
-    if ratio >= 0.90:
-        opener = "Excellent day"
-    elif ratio >= 0.70:
-        opener = "Good day"
-    elif ratio >= 0.45:
-        opener = "Decent output"
-    else:
-        opener = "Tough day"
-
-    # Weather context
-    wx_part = ""
-    if weather:
-        code = weather["code"]
-        if code == 0:
-            wx_part = f" under clear skies ({weather['high']}°F)"
-        elif code in (1, 2):
-            wx_part = f" with some clouds ({weather['high']}°F)"
-        elif code == 3:
-            wx_part = f" under overcast skies ({weather['high']}°F)"
-        elif code in (45, 48):
-            wx_part = f" through morning fog ({weather['high']}°F)"
-        elif code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82):
-            wx_part = f" in rainy conditions ({weather['high']}°F)"
-        elif code in (71, 73, 75, 77, 85, 86):
-            wx_part = f" through snowy weather ({weather['high']}°F)"
-        elif code in (95, 96, 99):
-            wx_part = f" with thunderstorms ({weather['high']}°F)"
-        else:
-            wx_part = f" ({weather['high']}°F)"
-
-    # vs yesterday
-    delta_part = ""
-    if prev and prev["produced"]:
-        diff = produced - prev["produced"]
-        pct = round(abs(diff) / prev["produced"] * 100)
-        if abs(diff) >= 0.3:
-            direction = "up" if diff > 0 else "down"
-            delta_part = f", {direction} {pct}% from yesterday's {prev['produced']:.1f} kWh"
-
-    # Tomorrow's forecast + production estimate
-    tmrw_part = ""
-    if forecast:
-        code      = forecast["code"]
-        hi        = forecast["high"]
-        cloud_pct = forecast.get("cloud_pct")
-
-        # kWh range from cloud cover (±15% band around cloud-adjusted mid)
-        est_str = ""
-        if cloud_pct is not None:
-            _max = SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS          # 89.6 kWh
-            factor = max(0.10, 1.0 - 0.75 * (cloud_pct / 100))
-            mid    = _max * factor
-            low    = round(mid * 0.85)
-            high   = round(min(mid * 1.15, _max))
-            est_str = f", est. {low}–{high} kWh"
-
-        if code == 0:
-            tmrw_part = f" — {forecast['emoji']} Clear skies tomorrow ({hi}°F){est_str}."
-        elif code in (1, 2):
-            tmrw_part = f" — {forecast['emoji']} Partly cloudy tomorrow ({hi}°F){est_str}."
-        elif code == 3:
-            tmrw_part = f" — {forecast['emoji']} Overcast tomorrow ({hi}°F){est_str}."
-        elif code in (45, 48):
-            tmrw_part = f" — {forecast['emoji']} Foggy tomorrow ({hi}°F){est_str}."
-        elif code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82):
-            tmrw_part = f" — {forecast['emoji']} Rain tomorrow ({hi}°F){est_str}."
-        elif code in (71, 73, 75, 77, 85, 86):
-            tmrw_part = f" — {forecast['emoji']} Snow tomorrow ({hi}°F){est_str}."
-        elif code in (95, 96, 99):
-            tmrw_part = f" — {forecast['emoji']} Storms tomorrow ({hi}°F){est_str}."
-        else:
-            tmrw_part = f" — {forecast['emoji']} {forecast['desc']} tomorrow ({hi}°F){est_str}."
-
-    rank_part = ""
-    if rank and rank_total:
-        if rank == 1:
-            opener = "🏆 New record"
-        elif rank == rank_total:
-            rank_part = " (lowest day yet)"
-        else:
-            pct = round(rank / rank_total * 100)
-            rank_part = f" (top {pct}%)"
-
-    return f"{opener} — {produced:.1f} kWh{rank_part}{wx_part}{delta_part}{tmrw_part}"
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
@@ -396,11 +172,8 @@ def build_email(target_date: str) -> str:
     # Weather — silently skipped if API unavailable
     _lat = cfg.get("latitude")
     _lon = cfg.get("longitude")
-    weather = _fetch_weather(d, _lat, _lon) if (_lat and _lon) else None
-
-    # Tomorrow's forecast for headline prediction
-    tomorrow_str = (date.fromisoformat(d) + timedelta(days=1)).isoformat()
-    forecast = _fetch_forecast(tomorrow_str, _lat, _lon) if (_lat and _lon) else None
+    weather  = _wx.fetch_day_weather(d, _lat, _lon) if (_lat and _lon) else None
+    forecast = _wx.fetch_tomorrow_forecast(_lat, _lon, d) if (_lat and _lon) else None
 
     # Previous day for change indicators
     prev_date = (date.fromisoformat(d) - timedelta(days=1)).isoformat()
@@ -463,7 +236,7 @@ def build_email(target_date: str) -> str:
         rank       = (rank_row["above"] or 0) + 1
 
     # Headline summary
-    headline = _headline_daily(produced, prev, weather, forecast, daily_target, rank, rank_total)
+    headline = _wx.build_headline_daily(produced, prev, weather, forecast, daily_target, rank, rank_total)
 
     # ------------------------------------------------------------------ #
     # Flow row cells
