@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import date, timedelta
 
 import database
+import weather as _wx
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 REPORTS_DIR = Path(__file__).parent / "reports"
@@ -343,6 +344,26 @@ def build_report(target_date: str) -> Path:
     prev_date = (date.fromisoformat(d) - timedelta(days=1)).isoformat()
     prev = database.get_reading(prev_date)
 
+    # Weather and tomorrow forecast for headline sentence
+    _lat = cfg.get("latitude")
+    _lon = cfg.get("longitude")
+    weather_data  = _wx.fetch_day_weather(d, _lat, _lon) if (_lat and _lon) else None
+    forecast_data = _wx.fetch_tomorrow_forecast(_lat, _lon, d) if (_lat and _lon) else None
+
+    # Rank for headline (top X% / new record / lowest day yet)
+    _rc = database.get_conn()
+    _rr = _rc.execute(
+        "SELECT COUNT(*) as total, SUM(CASE WHEN produced > ? THEN 1 ELSE 0 END) as above "
+        "FROM daily_readings WHERE date <= ?",
+        (produced, d),
+    ).fetchone()
+    _rc.close()
+    rank_total = _rr["total"] if _rr and _rr["total"] else 0
+    rank       = ((_rr["above"] or 0) + 1) if rank_total else 0
+
+    daily_target = monthly_target / 30
+    headline = _wx.build_headline_daily(produced, prev, weather_data, forecast_data, daily_target, rank, rank_total)
+
     pto_label   = _pto_duration(d)
     date_display = _fmt_date(d)
     perf        = _perf_meter(d, produced, monthly_target)
@@ -434,6 +455,7 @@ def build_report(target_date: str) -> Path:
     <div class="date">{date_display}</div>
   </div>
   <div class="pto-badge">{pto_label}</div>
+  <p style="margin:10px 0 16px;font-size:14px;color:#333;font-style:italic;line-height:1.5">{headline}</p>
 
   <!-- Performance meter -->
   <div class="perf-meter">
