@@ -135,7 +135,7 @@ def fetch_tomorrow_forecast(latitude: float, longitude: float, report_date: str 
             params={
                 "latitude":  latitude,
                 "longitude": longitude,
-                "daily": "weathercode,temperature_2m_max,temperature_2m_min,"
+                "daily": "weather_code,temperature_2m_max,temperature_2m_min,"
                          "precipitation_probability_max,cloud_cover_mean",
                 "timezone":     "America/New_York",
                 "forecast_days": 7,
@@ -157,7 +157,7 @@ def fetch_tomorrow_forecast(latitude: float, longitude: float, report_date: str 
         print(f"  [weather: {forecast_date} not in forecast response]")
         return None
 
-    wmo_code   = int(daily["weathercode"][idx])
+    wmo_code   = int((daily.get("weather_code") or daily.get("weathercode", []))[idx])
     temp_max   = daily["temperature_2m_max"][idx]
     temp_min   = daily["temperature_2m_min"][idx]
     precip_pct = daily["precipitation_probability_max"][idx]
@@ -167,7 +167,7 @@ def fetch_tomorrow_forecast(latitude: float, longitude: float, report_date: str 
     temp_f_low = round(temp_min * 9 / 5 + 32)
 
     label, outlook = _WMO_MAP.get(wmo_code, ("Unknown", "fair"))
-    factor = _cloud_factor(cloud_pct)
+    factor = _cloud_factor(cloud_pct) if cloud_pct is not None else _cloud_factor(50)
 
     theoretical_max = SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS
     mid_est  = round(theoretical_max * factor, 1)
@@ -247,22 +247,31 @@ def build_headline_daily(produced: float, prev, weather, forecast, daily_target:
             low     = round(mid * 0.85)
             high    = round(min(mid * 1.15, _max))
             est_str = f", est. {low}–{high} kWh"
-        if code == 0:
-            tmrw_part = f" — {forecast['emoji']} Clear skies tomorrow ({hi}°F){est_str}."
-        elif code in (1, 2):
-            tmrw_part = f" — {forecast['emoji']} Partly cloudy tomorrow ({hi}°F){est_str}."
-        elif code == 3:
-            tmrw_part = f" — {forecast['emoji']} Overcast tomorrow ({hi}°F){est_str}."
-        elif code in (45, 48):
-            tmrw_part = f" — {forecast['emoji']} Foggy tomorrow ({hi}°F){est_str}."
-        elif code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82):
-            tmrw_part = f" — {forecast['emoji']} Rain tomorrow ({hi}°F){est_str}."
-        elif code in (71, 73, 75, 77, 85, 86):
-            tmrw_part = f" — {forecast['emoji']} Snow tomorrow ({hi}°F){est_str}."
-        elif code in (95, 96, 99):
-            tmrw_part = f" — {forecast['emoji']} Storms tomorrow ({hi}°F){est_str}."
+        fdate = forecast.get("date", "")
+        today_iso    = date.today().isoformat()
+        tomorrow_iso = (date.today() + timedelta(days=1)).isoformat()
+        if fdate == today_iso:
+            day_label = "today"
+        elif fdate == tomorrow_iso:
+            day_label = "tomorrow"
         else:
-            tmrw_part = f" — {forecast['emoji']} {forecast['desc']} tomorrow ({hi}°F){est_str}."
+            day_label = fdate
+        if code == 0:
+            tmrw_part = f" — {forecast['emoji']} Clear skies {day_label} ({hi}°F){est_str}."
+        elif code in (1, 2):
+            tmrw_part = f" — {forecast['emoji']} Partly cloudy {day_label} ({hi}°F){est_str}."
+        elif code == 3:
+            tmrw_part = f" — {forecast['emoji']} Overcast {day_label} ({hi}°F){est_str}."
+        elif code in (45, 48):
+            tmrw_part = f" — {forecast['emoji']} Foggy {day_label} ({hi}°F){est_str}."
+        elif code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82):
+            tmrw_part = f" — {forecast['emoji']} Rain {day_label} ({hi}°F){est_str}."
+        elif code in (71, 73, 75, 77, 85, 86):
+            tmrw_part = f" — {forecast['emoji']} Snow {day_label} ({hi}°F){est_str}."
+        elif code in (95, 96, 99):
+            tmrw_part = f" — {forecast['emoji']} Storms {day_label} ({hi}°F){est_str}."
+        else:
+            tmrw_part = f" — {forecast['emoji']} {forecast['desc']} {day_label} ({hi}°F){est_str}."
 
     rank_part = ""
     if rank and rank_total:
