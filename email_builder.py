@@ -3,13 +3,14 @@ Generates email-safe HTML for the daily solar report.
 Uses table-based layout with fully inline styles — compatible with
 Outlook desktop, webmail, Gmail, and mobile clients.
 """
+import calendar
 import json
-import math
 from pathlib import Path
 from datetime import date, timedelta
 
 import database
 import weather as _wx
+from report_builder import _break_even
 
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
@@ -71,30 +72,6 @@ def _pto_duration(target_date: str) -> str:
     return f"{years}yr{f' {months}mo' if months else ''} since PTO"
 
 
-def _break_even(cfg: dict, as_of_date: str) -> dict:
-    conn = database.get_conn()
-    row = conn.execute(
-        "SELECT SUM(total_value) as earned, COUNT(*) as days FROM daily_readings WHERE date <= ?",
-        (as_of_date,),
-    ).fetchone()
-    conn.close()
-    net_cost = cfg.get("net_cost", 16610)
-    total_earned = row["earned"] or 0.0
-    days_tracked = row["days"] or 1
-    remaining = max(net_cost - total_earned, 0)
-    avg_daily = total_earned / days_tracked if days_tracked > 0 else 0
-    if avg_daily > 0 and remaining > 0:
-        days_left = math.ceil(remaining / avg_daily)
-        years = days_left // 365
-        months = (days_left % 365) // 30
-        label = f"~{years}yr" + (f" {months}mo" if months else "") if years >= 1 else (f"~{months}mo" if months >= 1 else f"~{days_left}d")
-    elif remaining <= 0:
-        label = "Paid off!"
-    else:
-        label = "N/A"
-    pct_paid = _pct(total_earned, net_cost)
-    return {"label": label, "pct_paid": pct_paid, "total_earned": total_earned, "remaining": remaining}
-
 
 def _inline_bar(fill_pct: float, color: str, height: int = 8) -> str:
     """Render a progress bar using a two-cell table (email-safe)."""
@@ -147,9 +124,16 @@ def build_email(target_date: str) -> str:
     total_value  = row["total_value"]
     monthly_kwh  = cum["monthly_kwh"]
 
-    month          = date.fromisoformat(d).month
-    monthly_target = MONTHLY_TARGETS[month]
-    month_name     = date.fromisoformat(d).strftime("%B")
+    report_dt      = date.fromisoformat(d)
+    month          = report_dt.month
+    pto            = date.fromisoformat(PTO_DATE)
+    days_in_month  = calendar.monthrange(report_dt.year, month)[1]
+    if report_dt.year == pto.year and month == pto.month:
+        operating_days = days_in_month - (pto.day - 1)
+        monthly_target = round(MONTHLY_TARGETS[month] * operating_days / days_in_month)
+    else:
+        monthly_target = MONTHLY_TARGETS[month]
+    month_name     = report_dt.strftime("%B")
     date_display   = _fmt_date(d)
     pto_label      = _pto_duration(d)
     be             = _break_even(cfg, d)

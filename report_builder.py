@@ -1,3 +1,4 @@
+import calendar
 import json
 import math
 from pathlib import Path
@@ -336,9 +337,16 @@ def build_report(target_date: str) -> Path:
 
     monthly_kwh  = cum["monthly_kwh"]
 
-    month = date.fromisoformat(d).month
-    monthly_target = MONTHLY_TARGETS[month]
-    month_name = date.fromisoformat(d).strftime("%B")
+    report_dt      = date.fromisoformat(d)
+    month          = report_dt.month
+    pto            = date.fromisoformat(PTO_DATE)
+    days_in_month  = calendar.monthrange(report_dt.year, month)[1]
+    if report_dt.year == pto.year and month == pto.month:
+        operating_days = days_in_month - (pto.day - 1)
+        monthly_target = round(MONTHLY_TARGETS[month] * operating_days / days_in_month)
+    else:
+        monthly_target = MONTHLY_TARGETS[month]
+    month_name = report_dt.strftime("%B")
 
     # Previous day for change indicators
     prev_date = (date.fromisoformat(d) - timedelta(days=1)).isoformat()
