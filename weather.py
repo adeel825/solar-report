@@ -1,6 +1,11 @@
+import json
+import time
 import requests
 from datetime import date, timedelta
+from pathlib import Path
 from statistics import mode
+
+FORECAST_CACHE_PATH = Path(__file__).parent / "forecast_cache.json"
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 
@@ -117,51 +122,14 @@ def fetch_day_weather(d: str, lat: float, lon: float) -> dict | None:
     return None
 
 
-def fetch_tomorrow_forecast(latitude: float, longitude: float, report_date: str | None = None) -> dict | None:
-    """Fetch forecast for the day after report_date.
-    Uses forecast_days=7 and finds the target date by index — more reliable than start_date/end_date params.
-    Returns None on any network/parse error."""
-    base = date.fromisoformat(report_date) if report_date else date.today() - timedelta(days=1)
-    forecast_date = (base + timedelta(days=1)).isoformat()
-
-    # Open-Meteo only serves forecasts for today and forward
-    today_str = date.today().isoformat()
-    if forecast_date < today_str:
-        forecast_date = today_str
-
-    try:
-        resp = requests.get(
-            OPEN_METEO_URL,
-            params={
-                "latitude":  latitude,
-                "longitude": longitude,
-                "daily": "weather_code,temperature_2m_max,temperature_2m_min,"
-                         "precipitation_probability_max,cloud_cover_mean",
-                "timezone":     "America/New_York",
-                "forecast_days": 7,
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        print(f"  [weather forecast failed: {e}]")
-        return None
-
-    daily = data.get("daily", {})
-    dates = daily.get("time", [])
-
-    try:
-        idx = dates.index(forecast_date)
-    except ValueError:
-        print(f"  [weather: {forecast_date} not in forecast response]")
-        return None
-
+def _extract_forecast_day(daily: dict, idx: int) -> dict:
+    """Extract one day's forecast from an Open-Meteo daily response by index."""
     wmo_code   = int((daily.get("weather_code") or daily.get("weathercode", []))[idx])
     temp_max   = daily["temperature_2m_max"][idx]
     temp_min   = daily["temperature_2m_min"][idx]
     precip_pct = daily["precipitation_probability_max"][idx]
     cloud_pct  = daily["cloud_cover_mean"][idx]
+    date_str   = daily["time"][idx]
 
     temp_f     = round(temp_max * 9 / 5 + 32)
     temp_f_low = round(temp_min * 9 / 5 + 32)
@@ -175,7 +143,7 @@ def fetch_tomorrow_forecast(latitude: float, longitude: float, report_date: str 
     high_est = round(min(mid_est * 1.15, theoretical_max), 1)
 
     return {
-        "date":       forecast_date,
+        "date":       date_str,
         "code":       wmo_code,
         "emoji":      _WMO_EMOJI.get(wmo_code, "🌡️"),
         "desc":       _WMO_DESC.get(wmo_code, ""),
@@ -191,6 +159,92 @@ def fetch_tomorrow_forecast(latitude: float, longitude: float, report_date: str 
         "high_est":   high_est,
         "mid_est":    mid_est,
     }
+
+
+def _save_forecast_cache(forecasts: dict) -> None:
+    try:
+        FORECAST_CACHE_PATH.write_text(json.dumps(forecasts), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _load_forecast_cache(forecast_date: str) -> dict | None:
+    try:
+        data = json.loads(FORECAST_CACHE_PATH.read_text(encoding="utf-8"))
+        entry = data.get(forecast_date)
+        if entry:
+            print(f"  [weather: using cached forecast for {forecast_date}]")
+        return entry
+    except Exception:
+        return None
+
+
+def fetch_tomorrow_forecast(latitude: float, longitude: float, report_date: str | None = None) -> dict | None:
+    """Fetch forecast for the day after report_date.
+    Retries up to 3 times on failure. On success, caches 2 days of forecasts
+    so a subsequent failure can fall back to the saved data.
+    Returns None only if all retries fail and no cache entry exists."""
+    base = date.fromisoformat(report_date) if report_date else date.today() - timedelta(days=1)
+    forecast_date = (base + timedelta(days=1)).isoformat()
+
+    # Open-Meteo only serves forecasts for today and forward
+    today_str = date.today().isoformat()
+    if forecast_date < today_str:
+        forecast_date = today_str
+
+    data = None
+    for attempt in range(3):
+        try:
+            resp = requests.get(
+                OPEN_METEO_URL,
+                params={
+                    "latitude":  latitude,
+                    "longitude": longitude,
+                    "daily": "weather_code,temperature_2m_max,temperature_2m_min,"
+                             "precipitation_probability_max,cloud_cover_mean",
+                    "timezone":      "America/New_York",
+                    "forecast_days": 7,
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception as e:
+            print(f"  [weather forecast attempt {attempt + 1}/3 failed: {e}]")
+            if attempt < 2:
+                time.sleep(10)
+
+    if data is None:
+        print("  [weather forecast failed after 3 attempts — trying cache]")
+        return _load_forecast_cache(forecast_date)
+
+    daily = data.get("daily", {})
+    dates = daily.get("time", [])
+
+    try:
+        idx = dates.index(forecast_date)
+    except ValueError:
+        print(f"  [weather: {forecast_date} not in forecast response — trying cache]")
+        return _load_forecast_cache(forecast_date)
+
+    # Cache next 2 days so tomorrow's report has a fallback
+    try:
+        cache = {}
+        for offset in range(2):
+            i = idx + offset
+            if i < len(dates):
+                entry = _extract_forecast_day(daily, i)
+                cache[entry["date"]] = entry
+        _save_forecast_cache(cache)
+    except Exception as e:
+        print(f"  [weather cache write failed: {e}]")
+
+    try:
+        return _extract_forecast_day(daily, idx)
+    except Exception as e:
+        print(f"  [weather: failed to extract forecast: {e}]")
+        return _load_forecast_cache(forecast_date)
 
 
 def build_headline_daily(produced: float, prev, weather, forecast, daily_target: float,

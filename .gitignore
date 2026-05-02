@@ -3,7 +3,9 @@ config.json
 
 # Generated data
 solar.db
+solar_data.db
 reports/
+forecast_cache.json
 
 # Python
 __pycache__/
