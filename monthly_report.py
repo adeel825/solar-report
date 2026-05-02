@@ -147,10 +147,14 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
 
     pm = prev_month
 
-    # Targets
-    m_target     = MONTHLY_TARGETS[month]
-    mtd_pct      = _pct(produced, m_target)
-    month_name   = start.strftime("%B")
+    # Targets — prorate if the month was partial (e.g. first month after PTO)
+    first_of_month = date(year, month, 1)
+    days_in_month  = calendar.monthrange(year, month)[1]
+    operating_days = days_in_month - (start - first_of_month).days
+    full_target    = MONTHLY_TARGETS[month]
+    m_target       = round(full_target * operating_days / days_in_month)
+    mtd_pct        = _pct(produced, m_target)
+    month_name     = start.strftime("%B")
 
     # YTD — clamp to PTO
     ytd_start    = max(date(year, 1, 1), pto).isoformat()
@@ -202,7 +206,7 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
   <div style="background:#f8f8f8;border-radius:10px;padding:14px;margin-bottom:4px">
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:8px">
       <tr>
-        <td style="font-size:13px;color:#444;font-family:sans-serif">{month_name} target: {m_target:,} kWh</td>
+        <td style="font-size:13px;color:#444;font-family:sans-serif">{month_name} target: {m_target:,} kWh{"" if operating_days == days_in_month else f" ({operating_days}/{days_in_month} days)"}</td>
         <td align="right" style="font-size:13px;font-weight:700;color:#1D9E75;font-family:sans-serif">
           {produced:.1f} kWh ({mtd_pct:.1f}%)
         </td>
