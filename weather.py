@@ -334,7 +334,11 @@ def build_headline_daily(produced: float, prev, weather, forecast, daily_target:
         elif rank == rank_total:
             rank_part = " (lowest day yet)"
         else:
-            pct = round(rank / rank_total * 100)
-            rank_part = f" (top {pct}%)"
+            if rank / rank_total <= 0.5:
+                pct = round(rank / rank_total * 100)
+                rank_part = f" (top {pct}%)"
+            else:
+                bottom_pct = round((rank_total - rank + 1) / rank_total * 100)
+                rank_part = f" (bottom {bottom_pct}%)"
 
     return f"{opener} — {produced:.1f} kWh{rank_part}{wx_part}{delta_part}{tmrw_part}"
