@@ -5,7 +5,11 @@ Run on the 1st of each month at 6am.
 """
 import calendar
 import json
+import os
 import sys
+from pathlib import Path
+
+os.chdir(Path(__file__).parent)
 from datetime import date, timedelta
 from pathlib import Path
 

@@ -1,6 +1,10 @@
 import sys
 import io
+import os
+from pathlib import Path
 from datetime import date, timedelta
+
+os.chdir(Path(__file__).parent)
 
 # Force UTF-8 output so emoji render correctly on Windows terminals
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")

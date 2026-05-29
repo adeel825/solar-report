@@ -2,6 +2,7 @@
 config.json
 
 # Generated data
+logs/
 solar.db
 solar_data.db
 reports/
