@@ -5,7 +5,11 @@ Run every Monday at 6am — reports on the week just completed.
 """
 import json
 import math
+import os
 import sys
+from pathlib import Path
+
+os.chdir(Path(__file__).parent)
 from datetime import date, timedelta
 from pathlib import Path
 from statistics import mode

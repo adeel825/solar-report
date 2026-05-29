@@ -362,7 +362,7 @@ def build_email(target_date: str) -> str:
   {_section_label("Financial value today")}
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:4px">
     <tr>
-      {_card("Electricity savings", f"${electricity_savings:.2f}{_delta(electricity_savings, 'electricity_savings', '', '.2f')}", f"{min(produced, consumed):.2f} kWh \u00d7 ${cfg['pseg_rate']:.3f}", C_GREEN)}
+      {_card("Electricity savings", f"${electricity_savings:.2f}{_delta(electricity_savings, 'electricity_savings', '', '.2f')}", f"{min(produced, consumed):.2f} kWh × ${cfg['pseg_rate']:.3f}", C_GREEN)}
       {_card("SREC preview (pending)", f"${srec_earned:.2f}", "not counted until approved", C_GREY)}
       {_card("Total value", f"${total_value:.2f}{_delta(total_value, 'total_value', '', '.2f')}", "electricity savings only", C_GREEN)}
     </tr>
@@ -371,7 +371,7 @@ def build_email(target_date: str) -> str:
   <!-- System performance bars -->
   {_section_label("System performance")}
   {bar_row(
-      f"Production vs theoretical max ({SYSTEM_CAPACITY_KW} kW \u00d7 {PEAK_SUN_HOURS} hrs)",
+      f"Production vs theoretical max ({SYSTEM_CAPACITY_KW} kW × {PEAK_SUN_HOURS} hrs)",
       f"{perf_pct:.0f}% &mdash; {produced:.1f} / {SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS:.0f} kWh",
       perf_pct, C_GREEN
   )}
