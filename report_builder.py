@@ -296,9 +296,10 @@ def _insights(row: dict, cum: dict, cfg: dict, monthly_target: int) -> list[tupl
     else:
         items.append(("#378ADD", f"Net draw of {abs(net):.2f} kWh from grid today — consumed more than exported"))
 
-    mtd_pct = _pct(monthly_kwh, monthly_target)
+    mtd_pct_ins = round(monthly_kwh / monthly_target * 100, 1) if monthly_target else 0
     month_name = date.fromisoformat(row["date"]).strftime("%B")
-    items.append(("#378ADD", f"Month-to-date: {monthly_kwh:.1f} kWh ({mtd_pct:.1f}% of {monthly_target:,} kWh {month_name} target)"))
+    star = " ⭐" if mtd_pct_ins > 100 else ""
+    items.append(("#378ADD", f"Month-to-date: {monthly_kwh:.1f} kWh ({mtd_pct_ins:.1f}% of {monthly_target:,} kWh {month_name} target{star})"))
 
     return items
 
@@ -382,7 +383,8 @@ def build_report(target_date: str) -> Path:
     perf        = _perf_meter(d, produced, monthly_target)
     be          = _break_even(cfg, d)
 
-    mtd_pct       = _pct(monthly_kwh, monthly_target)
+    mtd_pct       = _pct(monthly_kwh, monthly_target)                           # capped at 100 for bar fill
+    mtd_pct_raw   = round(monthly_kwh / monthly_target * 100, 1) if monthly_target else 0  # uncapped for label
     perf_pct      = _pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
 
     # Net metering bank since PTO — seasonal day-coverage
@@ -555,7 +557,7 @@ def build_report(target_date: str) -> Path:
     <div class="bar-track"><div class="bar-fill" style="width:{perf_pct}%;background:#1D9E75"></div></div>
   </div>
   <div class="bar-wrap">
-    <div class="bar-label"><span>Month-to-date vs {month_name} target</span><span><strong>{mtd_pct:.1f}%</strong> — {monthly_kwh:.1f} / {monthly_target:,} kWh</span></div>
+    <div class="bar-label"><span>Month-to-date vs {month_name} target</span><span><strong>{mtd_pct_raw:.1f}%{'  ⭐' if mtd_pct_raw > 100 else ''}</strong> — {monthly_kwh:.1f} / {monthly_target:,} kWh</span></div>
     <div class="bar-track"><div class="bar-fill" style="width:{mtd_pct}%;background:#378ADD"></div></div>
   </div>
   <div class="bar-wrap">

@@ -180,7 +180,8 @@ def build_email(target_date: str) -> str:
             f'{arrow} {diff:+{fmt}}{unit}</span>'
         )
 
-    mtd_pct    = _pct(monthly_kwh, monthly_target)
+    mtd_pct     = _pct(monthly_kwh, monthly_target)                             # capped at 100 for bar fill
+    mtd_pct_raw = round(monthly_kwh / monthly_target * 100, 1) if monthly_target else 0  # uncapped for label
     perf_pct   = _pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
     be_pct     = be["pct_paid"]
     net_sign  = "+" if net >= 0 else ""
@@ -388,7 +389,7 @@ def build_email(target_date: str) -> str:
   )}
   {bar_row(
       f"Month-to-date vs {month_name} target",
-      f"{mtd_pct:.1f}% &mdash; {monthly_kwh:.1f} / {monthly_target:,} kWh",
+      f"{mtd_pct_raw:.1f}%{'  ⭐' if mtd_pct_raw > 100 else ''} &mdash; {monthly_kwh:.1f} / {monthly_target:,} kWh",
       mtd_pct, C_BLUE
   )}
   {bar_row(
