@@ -142,13 +142,9 @@ def build_email(target_date: str) -> str:
     WINTER_DRAW = 19.0   # kWh/day — PSE&G bill Jan–Feb average
     SPRING_DRAW = 22.7   # kWh/day — PSE&G bill Mar–May average
     SUMMER_DRAW = 52.0   # kWh/day — PSE&G bill Jun–Aug peak
-    _bc = database.get_conn()
-    _br = _bc.execute(
-        "SELECT SUM(net) as banked_kwh "
-        "FROM daily_readings WHERE date >= ?", (PTO_DATE,)
-    ).fetchone()
-    _bc.close()
-    banked_kwh  = _br["banked_kwh"] or 0.0
+    _bank = database.get_net_bank(PTO_DATE)
+    banked_kwh    = _bank["banked_kwh"]
+    bank_excluded = _bank["anomalous_days"]
     winter_days = round(banked_kwh / WINTER_DRAW) if banked_kwh > 0 else 0
     spring_days = round(banked_kwh / SPRING_DRAW) if banked_kwh > 0 else 0
     summer_days = round(banked_kwh / SUMMER_DRAW) if banked_kwh > 0 else 0
@@ -163,9 +159,16 @@ def build_email(target_date: str) -> str:
     prev_date = (date.fromisoformat(d) - timedelta(days=1)).isoformat()
     prev = database.get_reading(prev_date)
 
+    # Consumption sanity check — a meter/comm glitch can dump a fabricated
+    # reading into a single day. Treat it as missing data rather than display it.
+    consumption_ok = not database.is_consumption_anomalous(consumed)
+    prev_consumption_ok = prev is not None and not database.is_consumption_anomalous(prev["consumed"])
+
     def _delta(current, key, unit=" kWh", fmt=".1f", invert=False):
         """Change badge. invert=True for metrics where up is bad (consumption, imports)."""
         if prev is None:
+            return ""
+        if key in ("consumed", "net", "imported", "exported") and not prev_consumption_ok:
             return ""
         previous = prev[key]
         diff = current - previous
@@ -240,21 +243,48 @@ def build_email(target_date: str) -> str:
     net_color  = C_GREEN if net >= 0 else C_RED
     net_label  = "kWh net export" if net >= 0 else "kWh net import"
     net_sign   = "+" if net >= 0 else ""
+
+    warning_banner_html = ""
+    if consumption_ok:
+        consumed_cell_html = (
+            f'<div style="font-size:18px;font-weight:600;color:{C_RED}">{consumed:.1f}</div>'
+            f'<div style="font-size:11px;color:#666;margin-top:2px">kWh consumed{_delta(consumed, "consumed", invert=True)}</div>'
+        )
+        net_cell_border = net_color
+        net_cell_html = (
+            f'<div style="font-size:18px;font-weight:600;color:{net_color}">{net_sign}{net:.1f}</div>'
+            f'<div style="font-size:11px;color:#666;margin-top:2px">{net_label}{_delta(net, "net")}</div>'
+        )
+        net_card_value, net_card_color = f"{net_sign}{net:.1f} kWh", net_color
+        elec_sub_html = f"{min(produced, consumed):.2f} kWh × ${cfg['pseg_rate']:.3f}"
+    else:
+        warning_banner_html = (
+            f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFF3E0;border:1px solid #FFCC80;'
+            f'border-radius:10px;margin-bottom:14px"><tr><td style="padding:12px 14px;font-size:13px;color:#7A4A00;line-height:1.5;'
+            f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">'
+            f'⚠️ <strong>Consumption data unavailable for {date_display}</strong> — Enphase reported an implausible reading '
+            f'({consumed:,.1f} kWh), most likely a meter/communication glitch. Consumption, net import/export, and '
+            f'net-metering bank figures are omitted below until the reading is corrected.</td></tr></table>'
+        )
+        consumed_cell_html = '<div style="font-size:14px;font-weight:600;color:#bbb">No data</div><div style="font-size:11px;color:#666;margin-top:2px">kWh consumed</div>'
+        net_cell_border = "#ddd"
+        net_cell_html = '<div style="font-size:14px;font-weight:600;color:#bbb">No data</div><div style="font-size:11px;color:#666;margin-top:2px">kWh net</div>'
+        net_card_value, net_card_color = "No data", C_GREY
+        elec_sub_html = f"{produced:.2f} kWh (solar output) × ${cfg['pseg_rate']:.3f}"
+
     flow_row = (
         flow_cell(f"{produced:.1f}", f"kWh produced{_delta(produced, 'produced')}", C_GREEN) +
         arrow_cell("vs") +
         f'<td align="center" style="padding:6px">'
         f'<table cellpadding="10" cellspacing="0" border="0" style="background:{C_BG};border-radius:8px;min-width:70px;border:2px solid #ddd">'
         f'<tr><td align="center" style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">'
-        f'<div style="font-size:18px;font-weight:600;color:{C_RED}">{consumed:.1f}</div>'
-        f'<div style="font-size:11px;color:#666;margin-top:2px">kWh consumed{_delta(consumed, "consumed", invert=True)}</div>'
+        f'{consumed_cell_html}'
         f'</td></tr></table></td>' +
         arrow_cell("=") +
         f'<td align="center" style="padding:6px">'
-        f'<table cellpadding="10" cellspacing="0" border="0" style="background:{C_BG};border-radius:8px;min-width:70px;border:2px solid {net_color}">'
+        f'<table cellpadding="10" cellspacing="0" border="0" style="background:{C_BG};border-radius:8px;min-width:70px;border:2px solid {net_cell_border}">'
         f'<tr><td align="center" style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">'
-        f'<div style="font-size:18px;font-weight:600;color:{net_color}">{net_sign}{net:.1f}</div>'
-        f'<div style="font-size:11px;color:#666;margin-top:2px">{net_label}{_delta(net, "net")}</div>'
+        f'{net_cell_html}'
         f'</td></tr></table></td>'
     )
 
@@ -304,6 +334,7 @@ def build_email(target_date: str) -> str:
 
   <!-- Headline summary -->
   <p style="margin:0 0 16px;font-size:14px;color:#333;font-style:italic;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">{headline}</p>
+  {warning_banner_html}
 
   <!-- Performance meter -->
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{C_BG};border-radius:10px;margin-bottom:16px">
@@ -352,7 +383,7 @@ def build_email(target_date: str) -> str:
   {_section_label("Key metrics")}
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:4px">
     <tr>
-      {_card("Net metering credit", f"{net_sign}{net:.1f} kWh", "net today", net_color)}
+      {_card("Net metering credit", net_card_value, "net today", net_card_color)}
       {_card("Month-to-date", f"{monthly_kwh:.1f} kWh", f"of {monthly_target:,} {month_name} target")}
       {_card("Break-even", be['label'], f"${be['total_earned']:,.0f} of ${cfg['net_cost']:,} earned", C_BLUE)}
     </tr>
@@ -362,7 +393,7 @@ def build_email(target_date: str) -> str:
   {_section_label("Financial value today")}
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:4px">
     <tr>
-      {_card("Electricity savings", f"${electricity_savings:.2f}{_delta(electricity_savings, 'electricity_savings', '', '.2f')}", f"{min(produced, consumed):.2f} kWh × ${cfg['pseg_rate']:.3f}", C_GREEN)}
+      {_card("Electricity savings", f"${electricity_savings:.2f}{_delta(electricity_savings, 'electricity_savings', '', '.2f')}", elec_sub_html, C_GREEN)}
       {_card("SREC preview (pending)", f"${srec_earned:.2f}", "not counted until approved", C_GREY)}
       {_card("Total value", f"${total_value:.2f}{_delta(total_value, 'total_value', '', '.2f')}", "electricity savings only", C_GREEN)}
     </tr>
@@ -390,6 +421,7 @@ def build_email(target_date: str) -> str:
       <td style="padding-bottom:6px">
         <span style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:#999">Net metering bank since PTO</span>
         &nbsp;&nbsp;<span style="font-size:13px;font-weight:700;color:#378ADD">{banked_kwh:.1f} kWh banked</span>
+        {f'&nbsp;&nbsp;<span style="font-size:10px;font-weight:600;color:{C_RED}">(excludes {bank_excluded} day{"s" if bank_excluded != 1 else ""} — missing data)</span>' if bank_excluded else ''}
       </td>
     </tr>
     <tr>
