@@ -148,6 +148,12 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
     best_day     = this_month["best_day"]
     worst_day    = this_month["worst_day"]
     days_count   = this_month["days"]
+    anomalous_days = this_month["anomalous_days"]
+    missing_note = (
+        f' <span style="color:#D85A30;font-weight:600;font-size:10px">'
+        f'(excludes {anomalous_days} day{"s" if anomalous_days != 1 else ""} — missing data)</span>'
+        if anomalous_days else ""
+    )
 
     pm = prev_month
 
@@ -243,7 +249,7 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
   <table width="100%" cellpadding="0" cellspacing="0" border="0"
     style="background:#f8f8f8;border-radius:10px;margin-bottom:4px">
     {_stat_row("Produced", f"{produced:.1f} kWh", d_prod)}
-    {_stat_row("Consumed", f"{consumed:.1f} kWh", d_cons)}
+    {_stat_row("Consumed", f"{consumed:.1f} kWh", d_cons, missing_note)}
     {_stat_row("Exported", f"{exported:.1f} kWh", _delta_html(exported, pm["exported"] if pm else None, " kWh"))}
     {_stat_row("Imported", f"{imported:.1f} kWh", _delta_html(imported, pm["imported"] if pm else None, " kWh"))}
   </table>

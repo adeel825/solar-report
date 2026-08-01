@@ -272,7 +272,7 @@ def _delta_html(current: float, previous: float | None, unit: str = "", fmt: str
     )
 
 
-def _insights(row: dict, cum: dict, cfg: dict, monthly_target: int) -> list[tuple[str, str]]:
+def _insights(row: dict, cum: dict, cfg: dict, monthly_target: int, consumption_ok: bool = True) -> list[tuple[str, str]]:
     items = []
     produced = row["produced"]
     net = row["net"]
@@ -286,7 +286,9 @@ def _insights(row: dict, cum: dict, cfg: dict, monthly_target: int) -> list[tupl
     else:
         items.append(("#D85A30", f"Low output — {produced:.1f} kWh is {perf_pct:.0f}% of theoretical max; possible clouds or shading"))
 
-    if net > 0:
+    if not consumption_ok:
+        items.append(("#D85A30", f"⚠️ Consumption data unavailable today — Enphase reported an implausible reading ({row['consumed']:,.1f} kWh); likely a meter/communication glitch. Net import/export and bank figures are omitted until corrected."))
+    elif net > 0:
         items.append(("#1D9E75", f"{net:.2f} kWh net exported — ${net * cfg['pseg_rate']:.2f} in bill credits earned today"))
     else:
         items.append(("#378ADD", f"Net draw of {abs(net):.2f} kWh from grid today — consumed more than exported"))
@@ -352,6 +354,11 @@ def build_report(target_date: str) -> Path:
     prev_date = (date.fromisoformat(d) - timedelta(days=1)).isoformat()
     prev = database.get_reading(prev_date)
 
+    # Consumption sanity check — a meter/comm glitch can dump a fabricated
+    # reading into a single day. Treat it as missing data rather than display it.
+    consumption_ok = not database.is_consumption_anomalous(consumed)
+    prev_consumption_ok = prev is not None and not database.is_consumption_anomalous(prev["consumed"])
+
     # Weather and tomorrow forecast for headline sentence
     _lat = cfg.get("latitude")
     _lon = cfg.get("longitude")
@@ -384,18 +391,14 @@ def build_report(target_date: str) -> Path:
     WINTER_DRAW = 19.0   # kWh/day — PSE&G bill Jan–Feb average
     SPRING_DRAW = 22.7   # kWh/day — PSE&G bill Mar–May average
     SUMMER_DRAW = 52.0   # kWh/day — PSE&G bill Jun–Aug peak
-    bank_conn = database.get_conn()
-    bank_row = bank_conn.execute(
-        "SELECT SUM(net) as banked_kwh "
-        "FROM daily_readings WHERE date >= ?", (PTO_DATE,)
-    ).fetchone()
-    bank_conn.close()
-    banked_kwh  = bank_row["banked_kwh"] or 0.0
+    bank = database.get_net_bank(PTO_DATE)
+    banked_kwh       = bank["banked_kwh"]
+    bank_excluded    = bank["anomalous_days"]
     winter_days = round(banked_kwh / WINTER_DRAW) if banked_kwh > 0 else 0
     spring_days = round(banked_kwh / SPRING_DRAW) if banked_kwh > 0 else 0
     summer_days = round(banked_kwh / SUMMER_DRAW) if banked_kwh > 0 else 0
 
-    insights = _insights(row, cum, cfg, monthly_target)
+    insights = _insights(row, cum, cfg, monthly_target, consumption_ok)
     insight_rows = "\n".join(
         f'    <div class="insight-row"><div class="dot" style="background:{color}"></div><div>{text}</div></div>'
         for color, text in insights
@@ -405,6 +408,25 @@ def build_report(target_date: str) -> Path:
     avg_tick_html = ""
     if perf["avg_pct"] is not None:
         avg_tick_html = f'<div style="position:absolute;left:{perf["avg_pct"]}%;top:-3px;bottom:-3px;width:2px;background:rgba(0,0,0,0.25);transform:translateX(-50%);border-radius:1px" title="Historical avg"></div>'
+
+    # Consumption anomaly handling — never display a fabricated reading.
+    warning_banner_html = ""
+    if consumption_ok:
+        consumed_flow_html = f'<div class="fval" style="color:#D85A30">{consumed:.1f}</div><div class="flbl">kWh consumed{_delta_html(consumed, prev["consumed"] if prev and prev_consumption_ok else None, " kWh")}</div>'
+        net_flow_html = f'<div class="fval" style="color:{"#1D9E75" if net >= 0 else "#D85A30"}">{"+" if net >= 0 else ""}{net:.1f}</div><div class="flbl">kWh {"net export" if net >= 0 else "net import"}{_delta_html(net, prev["net"] if prev and prev_consumption_ok else None, " kWh")}</div>'
+        net_card_html = f'<div class="val" style="color:{"#1D9E75" if net >= 0 else "#D85A30"}">{"+" if net >= 0 else ""}{net:.1f}</div><div class="sub">kWh net today</div>'
+        elec_sub_html = f"{min(produced, consumed):.2f} kWh × ${cfg['pseg_rate']:.3f}"
+    else:
+        warning_banner_html = (
+            f'<div style="background:#FFF3E0;border:1px solid #FFCC80;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#7A4A00;line-height:1.5">'
+            f'⚠️ <strong>Consumption data unavailable for {date_display}</strong> — Enphase reported an implausible reading '
+            f'({consumed:,.1f} kWh), most likely a meter/communication glitch. Consumption, net import/export, and '
+            f'net-metering bank figures are omitted below until the reading is corrected.</div>'
+        )
+        consumed_flow_html = '<div class="fval" style="color:#bbb;font-size:14px">No data</div><div class="flbl">kWh consumed</div>'
+        net_flow_html = '<div class="fval" style="color:#bbb;font-size:14px">No data</div><div class="flbl">kWh net</div>'
+        net_card_html = '<div class="val" style="color:#bbb;font-size:16px">No data</div><div class="sub">kWh net today</div>'
+        elec_sub_html = f"{produced:.2f} kWh (solar output) × ${cfg['pseg_rate']:.3f}"
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -464,6 +486,7 @@ def build_report(target_date: str) -> Path:
   </div>
   <div class="pto-badge">{pto_label}</div>
   <p style="margin:10px 0 16px;font-size:14px;color:#333;font-style:italic;line-height:1.5">{headline}</p>
+  {warning_banner_html}
 
   <!-- Performance meter -->
   <div class="perf-meter">
@@ -499,13 +522,11 @@ def build_report(target_date: str) -> Path:
     </div>
     <div class="flow-arrow">vs</div>
     <div class="flow-box highlight">
-      <div class="fval" style="color:#D85A30">{consumed:.1f}</div>
-      <div class="flbl">kWh consumed{_delta_html(consumed, prev["consumed"] if prev else None, " kWh")}</div>
+      {consumed_flow_html}
     </div>
     <div class="flow-arrow">=</div>
-    <div class="flow-box" style="border:2px solid {'#1D9E75' if net >= 0 else '#D85A30'}">
-      <div class="fval" style="color:{'#1D9E75' if net >= 0 else '#D85A30'}">{'+' if net >= 0 else ''}{net:.1f}</div>
-      <div class="flbl">kWh {'net export' if net >= 0 else 'net import'}{_delta_html(net, prev["net"] if prev else None, " kWh")}</div>
+    <div class="flow-box" style="border:2px solid {('#1D9E75' if net >= 0 else '#D85A30') if consumption_ok else '#ddd'}">
+      {net_flow_html}
     </div>
   </div>
 
@@ -513,8 +534,7 @@ def build_report(target_date: str) -> Path:
   <div class="grid4">
     <div class="card">
       <div class="lbl">Net metering credit</div>
-      <div class="val" style="color:{'#1D9E75' if net >= 0 else '#D85A30'}">{'+' if net >= 0 else ''}{net:.1f}</div>
-      <div class="sub">kWh net today</div>
+      {net_card_html}
     </div>
     <div class="card">
       <div class="lbl">Month-to-date production</div>
@@ -533,7 +553,7 @@ def build_report(target_date: str) -> Path:
     <div class="card">
       <div class="lbl">Electricity savings</div>
       <div class="val" style="color:#1D9E75">${electricity_savings:.2f}{_delta_html(electricity_savings, prev["electricity_savings"] if prev else None, "", ".2f")}</div>
-      <div class="sub">{min(produced, consumed):.2f} kWh × ${cfg['pseg_rate']:.3f}</div>
+      <div class="sub">{elec_sub_html}</div>
     </div>
     <div class="card">
       <div class="lbl">Total value</div>
@@ -556,7 +576,7 @@ def build_report(target_date: str) -> Path:
     <div class="bar-track"><div class="bar-fill" style="width:{be['pct_paid']}%;background:#9B59B6"></div></div>
   </div>
   <div style="margin-bottom:12px">
-    <div class="bar-label" style="margin-bottom:8px"><span style="font-weight:600">Net metering bank</span><span style="color:#378ADD;font-weight:700">{banked_kwh:.1f} kWh banked since PTO</span></div>
+    <div class="bar-label" style="margin-bottom:8px"><span style="font-weight:600">Net metering bank</span><span style="color:#378ADD;font-weight:700">{banked_kwh:.1f} kWh banked since PTO{f' <span style="color:#D85A30;font-weight:600;font-size:10px">(excludes {bank_excluded} day{"s" if bank_excluded != 1 else ""} — missing data)</span>' if bank_excluded else ''}</span></div>
     <div style="display:flex;gap:8px">
       <div style="flex:1;background:#f0f4ff;border-radius:8px;padding:10px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
         <div style="font-size:10px;color:#666;margin-bottom:3px">❄️ Winter day</div>

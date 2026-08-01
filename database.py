@@ -6,6 +6,15 @@ from datetime import date
 DB_PATH = Path(__file__).parent / "solar.db"
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
+# Consumption readings above this are treated as missing/bad data rather than
+# real usage — Enphase meter/comm glitches occasionally dump a garbage pulse
+# count into a single day (e.g. 16,782 kWh vs a normal ~30-70 kWh/day).
+CONSUMPTION_SANITY_CAP_KWH = 300
+
+
+def is_consumption_anomalous(consumed: float | None) -> bool:
+    return consumed is not None and consumed > CONSUMPTION_SANITY_CAP_KWH
+
 
 def load_config():
     with open(CONFIG_PATH, encoding="utf-8-sig") as f:
@@ -152,29 +161,63 @@ def get_readings_in_range(start: str, end: str) -> list[dict]:
 
 
 def get_period_summary(start: str, end: str) -> dict | None:
-    """Summed/averaged metrics for a date range. Returns None if no rows."""
+    """
+    Summed/averaged metrics for a date range. Returns None if no rows.
+    Days with an anomalous consumption reading (see is_consumption_anomalous)
+    are excluded from consumed/imported/exported/net sums — a fabricated
+    meter reading would otherwise blow out the whole period's totals.
+    `anomalous_days` reports how many days were excluded.
+    """
     conn = get_conn()
     row = conn.execute("""
         SELECT
             COUNT(*)              as days,
             SUM(produced)         as produced,
-            SUM(consumed)         as consumed,
-            SUM(imported)         as imported,
-            SUM(exported)         as exported,
-            SUM(net)              as net,
+            SUM(CASE WHEN consumed <= ? THEN consumed END)      as consumed,
+            SUM(CASE WHEN consumed <= ? THEN imported END)      as imported,
+            SUM(CASE WHEN consumed <= ? THEN exported END)      as exported,
+            SUM(CASE WHEN consumed <= ? THEN net END)           as net,
             SUM(electricity_savings) as electricity_savings,
             SUM(srec_earned)      as srec_earned,
             SUM(total_value)      as total_value,
             AVG(produced)         as avg_produced,
             MAX(produced)         as best_day,
-            MIN(produced)         as worst_day
+            MIN(produced)         as worst_day,
+            SUM(CASE WHEN consumed > ? THEN 1 ELSE 0 END) as anomalous_days
         FROM daily_readings
         WHERE date >= ? AND date <= ?
-    """, (start, end)).fetchone()
+    """, (CONSUMPTION_SANITY_CAP_KWH, CONSUMPTION_SANITY_CAP_KWH, CONSUMPTION_SANITY_CAP_KWH,
+          CONSUMPTION_SANITY_CAP_KWH, CONSUMPTION_SANITY_CAP_KWH, start, end)).fetchone()
     conn.close()
     if not row or not row["days"]:
         return None
-    return dict(row)
+    result = dict(row)
+    result["consumed"] = result["consumed"] or 0.0
+    result["imported"] = result["imported"] or 0.0
+    result["exported"] = result["exported"] or 0.0
+    result["net"]      = result["net"] or 0.0
+    return result
+
+
+def get_net_bank(since_date: str) -> dict:
+    """
+    Net metering bank (SUM of net) since since_date, excluding days with an
+    anomalous consumption reading so a bad meter glitch doesn't corrupt the
+    banked-kWh figure. Returns banked_kwh and how many days were excluded.
+    """
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT
+            SUM(CASE WHEN consumed <= ? THEN net END) as banked_kwh,
+            SUM(CASE WHEN consumed > ? THEN 1 ELSE 0 END) as anomalous_days
+        FROM daily_readings
+        WHERE date >= ?
+    """, (CONSUMPTION_SANITY_CAP_KWH, CONSUMPTION_SANITY_CAP_KWH, since_date)).fetchone()
+    conn.close()
+    return {
+        "banked_kwh": (row["banked_kwh"] or 0.0) if row else 0.0,
+        "anomalous_days": (row["anomalous_days"] or 0) if row else 0,
+    }
 
 
 def get_cumulative() -> dict:
