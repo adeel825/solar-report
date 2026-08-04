@@ -97,23 +97,26 @@ def _perf_meter(target_date: str, produced: float, monthly_target: int) -> dict:
     else:
         rating, rating_color = "POOR", "#D85A30"
 
-    # Gauge scale: 0 → daily_target × 1.35 (gives breathing room above 100%)
-    scale_max = daily_target * 1.35
-    needle_pct = min(produced / scale_max * 100, 100) if scale_max else 0
-    avg_pct = min(hist_avg / scale_max * 100, 100) if hist_avg and scale_max else None
-    # Zone boundaries as % of scale_max
-    # Poor: 0–45%, Fair: 45–70%, Good: 70–90%, Excellent: 90–100%
-    z_poor  = round(0.45 / 1.35 * 100, 1)   # 33.3%
-    z_fair  = round(0.70 / 1.35 * 100, 1)   # 51.9%
-    z_good  = round(0.90 / 1.35 * 100, 1)   # 66.7%
-    # excellent fills the rest
+    # Gauge scale: expands to fit production when over target, otherwise daily_target × 1.35
+    over_target = ratio >= 1.0
+    scale_max   = max(daily_target * 1.35, produced * 1.1) if daily_target else (produced * 1.1 or 1)
+    needle_pct  = produced / scale_max * 100 if scale_max else 0
+    avg_pct     = hist_avg / scale_max * 100 if hist_avg and scale_max else None
+    # Zone boundaries as % of scale_max (dynamic so zones stay proportional)
+    z_poor  = round(0.45 * daily_target / scale_max * 100, 1)
+    z_fair  = round(0.70 * daily_target / scale_max * 100, 1)
+    z_good  = round(0.90 * daily_target / scale_max * 100, 1)
+    # 100% target line position on gauge
+    target_pct = round(daily_target / scale_max * 100, 1)
 
     sub_parts = [f"Today {produced:.1f} kWh"]
+    if over_target:
+        sub_parts.append(f"{round(ratio * 100)}% of daily target ⭐")
     if hist_avg is not None:
         sub_parts.append(f"Avg {hist_avg:.1f} kWh ({hist_count}d)")
     if hist_best is not None:
         sub_parts.append(f"Best {hist_best:.1f} kWh")
-    sub_parts.append(f"Monthly daily target {daily_target:.0f} kWh")
+    sub_parts.append(f"Daily target {daily_target:.0f} kWh")
 
     return {
         "rating": rating,
@@ -123,6 +126,8 @@ def _perf_meter(target_date: str, produced: float, monthly_target: int) -> dict:
         "z_poor": z_poor,
         "z_fair": z_fair,
         "z_good": z_good,
+        "target_pct": target_pct,
+        "over_target": over_target,
         "sub": " · ".join(sub_parts),
         "hist_count": hist_count,
     }
@@ -293,9 +298,10 @@ def _insights(row: dict, cum: dict, cfg: dict, monthly_target: int, consumption_
     else:
         items.append(("#378ADD", f"Net draw of {abs(net):.2f} kWh from grid today — consumed more than exported"))
 
-    mtd_pct = _pct(monthly_kwh, monthly_target)
+    mtd_pct_ins = round(monthly_kwh / monthly_target * 100, 1) if monthly_target else 0
     month_name = date.fromisoformat(row["date"]).strftime("%B")
-    items.append(("#378ADD", f"Month-to-date: {monthly_kwh:.1f} kWh ({mtd_pct:.1f}% of {monthly_target:,} kWh {month_name} target)"))
+    star = " ⭐" if mtd_pct_ins > 100 else ""
+    items.append(("#378ADD", f"Month-to-date: {monthly_kwh:.1f} kWh ({mtd_pct_ins:.1f}% of {monthly_target:,} kWh {month_name} target{star})"))
 
     return items
 
@@ -384,7 +390,8 @@ def build_report(target_date: str) -> Path:
     perf        = _perf_meter(d, produced, monthly_target)
     be          = _break_even(cfg, d)
 
-    mtd_pct       = _pct(monthly_kwh, monthly_target)
+    mtd_pct       = _pct(monthly_kwh, monthly_target)                           # capped at 100 for bar fill
+    mtd_pct_raw   = round(monthly_kwh / monthly_target * 100, 1) if monthly_target else 0  # uncapped for label
     perf_pct      = _pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
 
     # Net metering bank since PTO — seasonal day-coverage
@@ -492,7 +499,7 @@ def build_report(target_date: str) -> Path:
   <div class="perf-meter">
     <div class="perf-header">
       <span class="perf-section-lbl">Today's performance</span>
-      <span class="perf-rating" style="color:{perf['rating_color']}">{perf['rating']}</span>
+      <span class="perf-rating" style="color:{perf['rating_color']}">{perf['rating']}{'  ⭐' if perf['over_target'] else ''}</span>
     </div>
     <div class="perf-gauge">
       <!-- colour zones -->
@@ -500,6 +507,8 @@ def build_report(target_date: str) -> Path:
       <div class="perf-zone" style="left:{perf['z_poor']}%;width:{perf['z_fair'] - perf['z_poor']}%;background:#FFE0B2"></div>
       <div class="perf-zone" style="left:{perf['z_fair']}%;width:{perf['z_good'] - perf['z_fair']}%;background:#C8E6C9"></div>
       <div class="perf-zone" style="left:{perf['z_good']}%;width:{100 - perf['z_good']}%;background:#A5D6A7;border-radius:0 8px 8px 0"></div>
+      <!-- 100% target tick -->
+      <div style="position:absolute;left:{perf['target_pct']}%;top:-2px;bottom:-2px;width:2px;background:#1D9E75;transform:translateX(-50%);border-radius:1px;opacity:0.6" title="100% daily target"></div>
       <!-- historical avg tick -->
       {avg_tick_html}
       <!-- today's needle -->
@@ -568,7 +577,7 @@ def build_report(target_date: str) -> Path:
     <div class="bar-track"><div class="bar-fill" style="width:{perf_pct}%;background:#1D9E75"></div></div>
   </div>
   <div class="bar-wrap">
-    <div class="bar-label"><span>Month-to-date vs {month_name} target</span><span><strong>{mtd_pct:.1f}%</strong> — {monthly_kwh:.1f} / {monthly_target:,} kWh</span></div>
+    <div class="bar-label"><span>Month-to-date vs {month_name} target</span><span><strong>{mtd_pct_raw:.1f}%{'  ⭐' if mtd_pct_raw > 100 else ''}</strong> — {monthly_kwh:.1f} / {monthly_target:,} kWh</span></div>
     <div class="bar-track"><div class="bar-fill" style="width:{mtd_pct}%;background:#378ADD"></div></div>
   </div>
   <div class="bar-wrap">

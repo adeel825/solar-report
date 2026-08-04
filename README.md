@@ -13,7 +13,7 @@ Sent every morning at 5am covering the previous day.
 
 - **Headline summary** — punchy one-sentence digest: today's rating + all-time percentile + weather context + % change vs yesterday + tomorrow's forecast. Good days show "top X%"; below-average days show "bottom X%" (e.g. *"Tough day — 19.4 kWh (bottom 14%) under overcast skies (71°F), down 71% from yesterday's 67.0 kWh — 🌧️ Rain today (70°F), est. 35–47 kWh."*)
 - **Weather** — daily high/low and conditions in the top-right corner (Open-Meteo, no key required)
-- **Performance meter** — colour-banded gauge rating production as Poor / Fair / Good / Excellent vs. monthly daily target
+- **Performance meter** — colour-banded gauge rating production as Poor / Fair / Good / Excellent vs. monthly daily target. When production exceeds 100% of the daily target, the gauge scale expands so the needle keeps moving, the rating shows ⭐, and the sub-line shows the actual percentage (e.g. "147% of daily target ⭐")
 - **Energy flow** — produced vs. consumed with net export/import
 - **Change indicators** — every metric shows ▲/▼ vs. the previous day, colour-coded so "up" is always good (more consumption = red, more production = green)
 - **Key metrics** — net metering credit, month-to-date production, break-even timeline

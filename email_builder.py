@@ -183,7 +183,8 @@ def build_email(target_date: str) -> str:
             f'{arrow} {diff:+{fmt}}{unit}</span>'
         )
 
-    mtd_pct    = _pct(monthly_kwh, monthly_target)
+    mtd_pct     = _pct(monthly_kwh, monthly_target)                             # capped at 100 for bar fill
+    mtd_pct_raw = round(monthly_kwh / monthly_target * 100, 1) if monthly_target else 0  # uncapped for label
     perf_pct   = _pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
     be_pct     = be["pct_paid"]
     net_sign  = "+" if net >= 0 else ""
@@ -200,6 +201,17 @@ def build_email(target_date: str) -> str:
         rating, rating_color = "FAIR", C_AMBER
     else:
         rating, rating_color = "POOR", C_RED
+
+    # Gauge scale and needle — expands past 100% target when over target
+    over_target       = ratio >= 1.0
+    gauge_scale       = max(daily_target * 1.35, produced * 1.1) if daily_target else (produced * 1.1 or 1)
+    gauge_needle_pct  = min(produced / gauge_scale * 100, 100) if gauge_scale else 0
+    gauge_z_poor_w    = round(0.45 * daily_target / gauge_scale * 100, 1)
+    gauge_z_fair_w    = round(0.70 * daily_target / gauge_scale * 100, 1) - gauge_z_poor_w
+    gauge_z_good_w    = round(0.90 * daily_target / gauge_scale * 100, 1) - gauge_z_poor_w - gauge_z_fair_w
+    gauge_z_excel_w   = round(100 - gauge_z_poor_w - gauge_z_fair_w - gauge_z_good_w, 1)
+    rating_display    = f"{rating}{'  ⭐' if over_target else ''}"
+    target_pct_note   = f" &nbsp;·&nbsp; {round(ratio * 100)}% of daily target ⭐" if over_target else ""
 
     # Historical context line + rank
     conn = database.get_conn()
@@ -342,22 +354,22 @@ def build_email(target_date: str) -> str:
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:10px">
         <tr>
           <td style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:#999">Today's performance</td>
-          <td align="right" style="font-size:14px;font-weight:700;color:{rating_color};letter-spacing:0.04em">{rating}</td>
+          <td align="right" style="font-size:14px;font-weight:700;color:{rating_color};letter-spacing:0.04em">{rating_display}</td>
         </tr>
       </table>
       <!-- Segmented colour bar -->
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:6px;overflow:hidden;margin-bottom:4px">
         <tr>
-          <td width="33%" style="height:12px;background:#FFCDD2;line-height:0;font-size:0">&nbsp;</td>
-          <td width="19%" style="height:12px;background:#FFE0B2;line-height:0;font-size:0">&nbsp;</td>
-          <td width="14%" style="height:12px;background:#C8E6C9;line-height:0;font-size:0">&nbsp;</td>
-          <td width="34%" style="height:12px;background:#A5D6A7;line-height:0;font-size:0">&nbsp;</td>
+          <td width="{gauge_z_poor_w:.1f}%" style="height:12px;background:#FFCDD2;line-height:0;font-size:0">&nbsp;</td>
+          <td width="{gauge_z_fair_w:.1f}%" style="height:12px;background:#FFE0B2;line-height:0;font-size:0">&nbsp;</td>
+          <td width="{gauge_z_good_w:.1f}%" style="height:12px;background:#C8E6C9;line-height:0;font-size:0">&nbsp;</td>
+          <td width="{gauge_z_excel_w:.1f}%" style="height:12px;background:#A5D6A7;line-height:0;font-size:0">&nbsp;</td>
         </tr>
       </table>
       <!-- Needle indicator as text marker -->
       <table width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td width="{max(perf_pct - 4, 0):.0f}%" style="font-size:0">&nbsp;</td>
+          <td width="{max(gauge_needle_pct - 4, 0):.0f}%" style="font-size:0">&nbsp;</td>
           <td style="font-size:12px;color:#1a1a1a;font-weight:700;white-space:nowrap">&#9650; {produced:.1f} kWh</td>
         </tr>
       </table>
@@ -369,7 +381,7 @@ def build_email(target_date: str) -> str:
           <td style="font-size:10px;color:#bbb">Excellent</td>
         </tr>
       </table>
-      <p style="font-size:11px;color:#888;margin:6px 0 0">Today {produced:.1f} kWh &nbsp;·&nbsp; Monthly daily target {monthly_target//30:.0f} kWh{hist_line}</p>
+      <p style="font-size:11px;color:#888;margin:6px 0 0">Today {produced:.1f} kWh{target_pct_note} &nbsp;·&nbsp; Daily target {monthly_target//30:.0f} kWh{hist_line}</p>
     </td></tr>
   </table>
 
@@ -408,7 +420,7 @@ def build_email(target_date: str) -> str:
   )}
   {bar_row(
       f"Month-to-date vs {month_name} target",
-      f"{mtd_pct:.1f}% &mdash; {monthly_kwh:.1f} / {monthly_target:,} kWh",
+      f"{mtd_pct_raw:.1f}%{'  ⭐' if mtd_pct_raw > 100 else ''} &mdash; {monthly_kwh:.1f} / {monthly_target:,} kWh",
       mtd_pct, C_BLUE
   )}
   {bar_row(
