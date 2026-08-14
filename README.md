@@ -22,7 +22,7 @@ Sent every morning at 5am covering the previous day.
   - Production vs. theoretical max
   - Month-to-date vs. monthly target
   - Break-even progress
-  - **Net metering bank** — cumulative kWh and dollar value banked since PTO, with days-of-coverage estimate
+  - **Net metering bank** — cumulative kWh and dollar value banked since PTO, with days-of-coverage estimate. Calibrated to PSE&G's own cumulative net-metering figure from the latest bill, plus day-level Enphase data for everything after — Enphase's telemetry alone drifts from the utility's meter by a few percent over time
 
 ### Weekly Report
 Sent every Monday at 6:00 AM covering the previous week.
