@@ -11,6 +11,18 @@ CONFIG_PATH = Path(__file__).parent / "config.json"
 # count into a single day (e.g. 16,782 kWh vs a normal ~30-70 kWh/day).
 CONSUMPTION_SANITY_CAP_KWH = 300
 
+# Net metering bank calibration. Enphase's day-level SUM(produced - consumed)
+# drifts from PSE&G's revenue-grade bidirectional meter over time (normal CT
+# calibration difference, plus PSE&G's net-metering banking window starting
+# slightly before Enphase's PTO_DATE cutoff) — by ~150 kWh over 4 months as of
+# Aug 2026. Re-anchor these two values whenever a new bill arrives: open the
+# bill's "Net Metering Program" table, take the latest row's meter-reading
+# date and "Cumulative kWh" figure, and set BANK_ANCHOR_DATE/BANK_ANCHOR_KWH
+# to that date and its sign-flipped value (PSE&G's convention is IN - OUT;
+# this project's convention is produced - consumed = -(IN - OUT)).
+BANK_ANCHOR_DATE = "2026-08-07"   # PSE&G meter-reading date last calibrated against
+BANK_ANCHOR_KWH  = 1055.0         # PSE&G cumulative kWh as of BANK_ANCHOR_DATE, sign-flipped
+
 
 def is_consumption_anomalous(consumed: float | None) -> bool:
     return consumed is not None and consumed > CONSUMPTION_SANITY_CAP_KWH
@@ -201,21 +213,27 @@ def get_period_summary(start: str, end: str) -> dict | None:
 
 def get_net_bank(since_date: str) -> dict:
     """
-    Net metering bank (SUM of net) since since_date, excluding days with an
-    anomalous consumption reading so a bad meter glitch doesn't corrupt the
-    banked-kWh figure. Returns banked_kwh and how many days were excluded.
+    Net metering bank: BANK_ANCHOR_KWH (PSE&G's own cumulative figure as of
+    BANK_ANCHOR_DATE) plus Enphase's day-level net for every day after the
+    anchor. Anchoring to the latest bill keeps the figure accurate — summing
+    Enphase's SUM(net) from since_date alone drifts from PSE&G's meter over
+    time (see BANK_ANCHOR_KWH comment). Assumes since_date <= BANK_ANCHOR_DATE
+    (true for the current caller, PTO_DATE). Days with an anomalous
+    consumption reading are excluded so a bad meter glitch doesn't corrupt it.
+    Returns banked_kwh and how many days were excluded.
     """
     conn = get_conn()
+    anchor_date = max(since_date, BANK_ANCHOR_DATE)
     row = conn.execute("""
         SELECT
-            SUM(CASE WHEN consumed <= ? THEN net END) as banked_kwh,
+            SUM(CASE WHEN consumed <= ? THEN net END) as delta_kwh,
             SUM(CASE WHEN consumed > ? THEN 1 ELSE 0 END) as anomalous_days
         FROM daily_readings
-        WHERE date >= ?
-    """, (CONSUMPTION_SANITY_CAP_KWH, CONSUMPTION_SANITY_CAP_KWH, since_date)).fetchone()
+        WHERE date > ?
+    """, (CONSUMPTION_SANITY_CAP_KWH, CONSUMPTION_SANITY_CAP_KWH, anchor_date)).fetchone()
     conn.close()
     return {
-        "banked_kwh": (row["banked_kwh"] or 0.0) if row else 0.0,
+        "banked_kwh": BANK_ANCHOR_KWH + ((row["delta_kwh"] or 0.0) if row else 0.0),
         "anomalous_days": (row["anomalous_days"] or 0) if row else 0,
     }
 

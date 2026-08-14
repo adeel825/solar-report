@@ -28,7 +28,7 @@ weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am
 - **Weather**: Uses hourly WMO codes during **peak solar hours only (9am–2pm)** to avoid overnight conditions skewing the description.
 - **Email subject**: Colour-dot prefix (🟢🟡🟠🔴) based on production vs daily target ratio.
 - **Headline**: One-sentence summary with rating opener, all-time percentile (top X%), weather context, % change vs yesterday, tomorrow forecast. Special cases: "🏆 New record" for rank 1, "lowest day yet" for last place.
-- **Net metering bank**: `SUM(net)` since PTO_DATE — cumulative kWh exported to grid.
+- **Net metering bank**: Calibrated to PSE&G's own cumulative net-metering figure (`BANK_ANCHOR_DATE`/`BANK_ANCHOR_KWH` in `database.py`) plus `SUM(net)` for Enphase days after the anchor. Re-anchor from the bill's "Net Metering Program" table whenever a new bill arrives — Enphase's daily-total telemetry drifts from PSE&G's meter over time.
 - **Break-even**: Year-by-year compound model, 3% annual rate escalation, SREC excluded.
 
 ## Configuration (`config.json` — gitignored)
