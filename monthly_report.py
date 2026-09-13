@@ -145,6 +145,7 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
     elec_sav     = this_month["electricity_savings"]
     srec_earned  = this_month["srec_earned"]
     total_val    = this_month["total_value"]
+    lifetime_produced = database.get_lifetime_production(PTO_DATE)
     best_day     = this_month["best_day"]
     worst_day    = this_month["worst_day"]
     days_count   = this_month["days"]
@@ -260,9 +261,8 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
     style="background:#f8f8f8;border-radius:10px;margin-bottom:4px">
     {_stat_row("Electricity savings", f"${elec_sav:.2f}", d_elec,
                f"{min(produced, consumed):.1f} kWh covered × ${cfg['pseg_rate']:.3f}")}
-    {_stat_row("SREC preview (pending)", f"${srec_earned:.2f}", "",
-               f"{produced/1000:.3f} MWh × ${cfg['srec_rate']:.2f} — not counted until approved",
-               color="#aaaaaa", label_color="#aaaaaa")}
+    {_stat_row("SREC income", f"${srec_earned:.2f}", d_srec,
+               f"{produced/1000:.3f} MWh × ${cfg['srec_rate']:.2f}")}
     {_stat_row("Total value", f"${total_val:.2f}", d_total)}
   </table>
 
@@ -274,6 +274,7 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
                f"${be['total_earned']:,.0f} earned · ${be['remaining']:,.0f} left")}
     {_stat_row("% recovered", f"{be['pct_paid']:.2f}%", "")}
     {_stat_row("Break-even target", be["break_even_date"].strftime("%b %Y") if be["break_even_date"] else "TBD", "")}
+    {_stat_row("Lifetime production", f"{lifetime_produced:,.0f} kWh", "", f"since PTO ({_fmt_date(PTO_DATE)})")}
   </table>
 
   <!-- Week-by-week -->

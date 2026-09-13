@@ -23,13 +23,14 @@ weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am
 ## Key Design Decisions
 
 - **Import/export**: Uses `net = produced - consumed` only. No rgm_stats (it measured inverter output, not grid export).
-- **Electricity savings**: `min(produced, consumed) × pseg_rate`. SRECs excluded until NJ approval.
-- **SRECs**: Displayed as greyed "pending" preview in all reports. One-line re-enable in `database.py` when approved.
+- **Electricity savings**: `min(produced, consumed) × pseg_rate`.
+- **SRECs**: NJ-approved as of 2026-09-13, rate $85/MWh. Included in `total_value` (`database.py`) and in break-even projections (`report_builder.py`). Historical `daily_readings` rows were backfilled from PTO at the approved rate. Live "SREC income" card in all reports.
+- **Lifetime production**: `database.get_lifetime_production(PTO_DATE)` — `SUM(produced)` since PTO. Displayed as its own card in all four report surfaces (daily HTML, daily email, weekly, monthly) alongside the SREC card.
 - **Weather**: Uses hourly WMO codes during **peak solar hours only (9am–2pm)** to avoid overnight conditions skewing the description.
 - **Email subject**: Colour-dot prefix (🟢🟡🟠🔴) based on production vs daily target ratio.
 - **Headline**: One-sentence summary with rating opener, all-time percentile (top X%), weather context, % change vs yesterday, tomorrow forecast. Special cases: "🏆 New record" for rank 1, "lowest day yet" for last place.
 - **Net metering bank**: Calibrated to PSE&G's own cumulative net-metering figure (`BANK_ANCHOR_DATE`/`BANK_ANCHOR_KWH` in `database.py`) plus `SUM(net)` for Enphase days after the anchor. Re-anchor from the bill's "Net Metering Program" table whenever a new bill arrives — Enphase's daily-total telemetry drifts from PSE&G's meter over time.
-- **Break-even**: Year-by-year compound model, 3% annual rate escalation, SREC excluded.
+- **Break-even**: Year-by-year compound model, 3% annual rate escalation on electricity savings; SREC income held flat at $85/MWh and included in annual value.
 
 ## Configuration (`config.json` — gitignored)
 
@@ -37,6 +38,7 @@ weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am
 |---|---|
 | `pseg_rate` | Combined delivery + supply rate (update quarterly) |
 | `pseg_supply_rate` | Supply component — changes quarterly |
+| `srec_rate` | SREC value in $/MWh |
 | `net_cost` | Net system cost after incentives |
 | `annual_target_kwh` | 13,400 kWh from installer estimate |
 | `latitude` / `longitude` | Used for Open-Meteo weather API |

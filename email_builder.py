@@ -123,6 +123,7 @@ def build_email(target_date: str) -> str:
     srec_earned  = row["srec_earned"]
     total_value  = row["total_value"]
     monthly_kwh  = cum["monthly_kwh"]
+    lifetime_produced = database.get_lifetime_production(PTO_DATE)
 
     report_dt      = date.fromisoformat(d)
     month          = report_dt.month
@@ -386,6 +387,7 @@ def build_email(target_date: str) -> str:
       {_card("Net metering credit", net_card_value, "net today", net_card_color)}
       {_card("Month-to-date", f"{monthly_kwh:.1f} kWh", f"of {monthly_target:,} {month_name} target")}
       {_card("Break-even", be['label'], f"${be['total_earned']:,.0f} of ${cfg['net_cost']:,} earned", C_BLUE)}
+      {_card("Lifetime production", f"{lifetime_produced:,.0f} kWh", f"since PTO ({_fmt_date(PTO_DATE)})", C_GREEN)}
     </tr>
   </table>
 
@@ -394,8 +396,8 @@ def build_email(target_date: str) -> str:
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:4px">
     <tr>
       {_card("Electricity savings", f"${electricity_savings:.2f}{_delta(electricity_savings, 'electricity_savings', '', '.2f')}", elec_sub_html, C_GREEN)}
-      {_card("SREC preview (pending)", f"${srec_earned:.2f}", "not counted until approved", C_GREY)}
-      {_card("Total value", f"${total_value:.2f}{_delta(total_value, 'total_value', '', '.2f')}", "electricity savings only", C_GREEN)}
+      {_card("SREC income", f"${srec_earned:.2f}", f"{produced/1000:.3f} MWh × ${cfg['srec_rate']:.2f}", C_GREEN)}
+      {_card("Total value", f"${total_value:.2f}{_delta(total_value, 'total_value', '', '.2f')}", "electricity savings + SREC income", C_GREEN)}
     </tr>
   </table>
 

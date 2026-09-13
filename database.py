@@ -97,7 +97,7 @@ def save_reading(reading: dict, target_date: str | None = None):
     # If produced >= consumed: whole bill is wiped out → save consumed × rate
     # If produced <  consumed: solar covers produced kWh → save produced × rate
     electricity_savings = round(min(produced, consumed) * pseg_rate, 4)
-    total_value = round(electricity_savings, 4)  # SRECs excluded until approval
+    total_value = round(electricity_savings + srec_earned, 4)
 
     conn = get_conn()
     c = conn.cursor()
@@ -236,6 +236,17 @@ def get_net_bank(since_date: str) -> dict:
         "banked_kwh": BANK_ANCHOR_KWH + ((row["delta_kwh"] or 0.0) if row else 0.0),
         "anomalous_days": (row["anomalous_days"] or 0) if row else 0,
     }
+
+
+def get_lifetime_production(since_date: str) -> float:
+    """Total produced kWh from since_date (inclusive) to the latest reading."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT SUM(produced) as total FROM daily_readings WHERE date >= ?",
+        (since_date,),
+    ).fetchone()
+    conn.close()
+    return (row["total"] or 0.0) if row else 0.0
 
 
 def get_cumulative() -> dict:
