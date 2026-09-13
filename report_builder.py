@@ -132,7 +132,7 @@ def _break_even(cfg: dict, as_of_date: str) -> dict:
     """
     Project break-even using a year-by-year compound model:
       - Electricity savings escalate 3%/yr (PSE&G historical avg)
-      - SREC held flat at $76.50/yr per 1,000 kWh
+      - SREC held flat at $85.00/yr per 1,000 kWh
       - Annual consumption baseline: 10,100 kWh (from pre-solar bills)
       - Annual production baseline: annual_target_kwh from config
 
@@ -152,7 +152,7 @@ def _break_even(cfg: dict, as_of_date: str) -> dict:
     conn.close()
 
     net_cost     = cfg.get("net_cost", 16610)
-    srec_rate    = cfg.get("srec_rate", 76.5)
+    srec_rate    = cfg.get("srec_rate", 85.0)
     pseg_rate    = cfg.get("pseg_rate", 0.276)
     annual_prod  = cfg.get("annual_target_kwh", 13400)
 
@@ -174,7 +174,7 @@ def _break_even(cfg: dict, as_of_date: str) -> dict:
     # --- Year-by-year projection ---
     # Year 1 starts at PTO_DATE. For each year compute:
     #   electricity_savings = min(annual_prod, ANNUAL_KWH) × rate × (1.03)^yr
-    #   srec_income         = (annual_prod / 1000) × srec_rate  (flat)
+    #   srec_income         = (annual_prod / 1000) × srec_rate  (flat, added to annual_value)
     pto_year        = PTO.year
     base_elec_saved = min(annual_prod, ANNUAL_KWH) * pseg_rate  # year-0 rate
 
@@ -186,8 +186,8 @@ def _break_even(cfg: dict, as_of_date: str) -> dict:
         calendar_year  = pto_year + yr
         escalation     = (1 + RATE_ESCALATION) ** yr
         elec_savings   = round(base_elec_saved * escalation, 2)
-        srec_income    = round((annual_prod / 1000) * srec_rate, 2)  # informational only
-        annual_value   = round(elec_savings, 2)  # SRECs excluded until approval
+        srec_income    = round((annual_prod / 1000) * srec_rate, 2)
+        annual_value   = round(elec_savings + srec_income, 2)
 
         # How much of this year is still ahead of us?
         year_start = date(calendar_year, PTO.month, PTO.day)
@@ -311,6 +311,7 @@ def _yby_rows(year_by_year: list, net_cost: float) -> str:
             f'<tr style="background:{bg}">'
             f'<td style="padding:6px 8px;color:#444">{yr["year"]}{marker}</td>'
             f'<td style="padding:6px 8px;text-align:right;color:#1D9E75">${yr["elec_savings"]:,.0f}</td>'
+            f'<td style="padding:6px 8px;text-align:right;color:#1D9E75">${yr["srec_income"]:,.0f}</td>'
             f'<td style="padding:6px 8px;text-align:right;font-weight:600">${yr["annual_value"]:,.0f}</td>'
             f'<td style="padding:6px 8px;text-align:right;font-weight:600;color:{cum_color}">${yr["cumulative"]:,.0f} / ${net_cost:,.0f}</td>'
             f'</tr>'
@@ -394,6 +395,8 @@ def build_report(target_date: str) -> Path:
     bank = database.get_net_bank(PTO_DATE)
     banked_kwh       = bank["banked_kwh"]
     bank_excluded    = bank["anomalous_days"]
+    lifetime_produced = database.get_lifetime_production(PTO_DATE)
+    srec_earned       = row["srec_earned"]
     winter_days = round(banked_kwh / WINTER_DRAW) if banked_kwh > 0 else 0
     spring_days = round(banked_kwh / SPRING_DRAW) if banked_kwh > 0 else 0
     summer_days = round(banked_kwh / SUMMER_DRAW) if banked_kwh > 0 else 0
@@ -546,6 +549,11 @@ def build_report(target_date: str) -> Path:
       <div class="val" style="color:{'#1D9E75' if be['remaining'] <= 0 else '#378ADD'}">{be['label']}</div>
       <div class="sub">{be['sub']}</div>
     </div>
+    <div class="card">
+      <div class="lbl">Lifetime production</div>
+      <div class="val" style="color:#1D9E75">{lifetime_produced:,.0f}</div>
+      <div class="sub">kWh since PTO ({_fmt_date(PTO_DATE)})</div>
+    </div>
   </div>
 
   <div class="section">Financial value today</div>
@@ -556,9 +564,14 @@ def build_report(target_date: str) -> Path:
       <div class="sub">{elec_sub_html}</div>
     </div>
     <div class="card">
+      <div class="lbl">SREC income</div>
+      <div class="val" style="color:#1D9E75">${srec_earned:.2f}</div>
+      <div class="sub">{produced/1000:.3f} MWh × ${cfg['srec_rate']:.2f}</div>
+    </div>
+    <div class="card">
       <div class="lbl">Total value</div>
       <div class="val" style="color:#1D9E75">${total_value:.2f}{_delta_html(total_value, prev["total_value"] if prev else None, "", ".2f")}</div>
-      <div class="sub">electricity savings only</div>
+      <div class="sub">electricity savings + SREC income</div>
     </div>
   </div>
 
@@ -598,12 +611,13 @@ def build_report(target_date: str) -> Path:
 
   <div class="divider"></div>
 
-  <div class="section">Payoff projection — electricity savings only, 3% annual rate escalation</div>
+  <div class="section">Payoff projection — electricity savings + SREC income, 3% annual rate escalation</div>
   <table style="width:100%;border-collapse:collapse;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
     <thead>
       <tr style="color:#999;text-align:left;border-bottom:2px solid #eee">
         <th style="padding:6px 8px;font-weight:600">Year</th>
         <th style="padding:6px 8px;font-weight:600;text-align:right">Elec. savings</th>
+        <th style="padding:6px 8px;font-weight:600;text-align:right">SREC income</th>
         <th style="padding:6px 8px;font-weight:600;text-align:right">Annual value</th>
         <th style="padding:6px 8px;font-weight:600;text-align:right">Cumulative</th>
       </tr>

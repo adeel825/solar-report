@@ -16,8 +16,8 @@ Sent every morning at 5am covering the previous day.
 - **Performance meter** — colour-banded gauge rating production as Poor / Fair / Good / Excellent vs. monthly daily target
 - **Energy flow** — produced vs. consumed with net export/import
 - **Change indicators** — every metric shows ▲/▼ vs. the previous day, colour-coded so "up" is always good (more consumption = red, more production = green)
-- **Key metrics** — net metering credit, month-to-date production, break-even timeline
-- **Financial value** — electricity savings at retail rate; SREC preview shown but excluded from totals until approved
+- **Key metrics** — net metering credit, month-to-date production, break-even timeline, lifetime production since PTO
+- **Financial value** — electricity savings at retail rate plus SREC income
 - **System performance bars**
   - Production vs. theoretical max
   - Month-to-date vs. monthly target
@@ -32,8 +32,8 @@ Sent every Monday at 6:00 AM covering the previous week.
 - **Headline summary** — one-sentence digest with week-over-week comparison and next-week weather forecast
 - Sparkline bar chart of daily production
 - Week totals vs previous week with change indicators
-- Financial value with SREC preview greyed out
-- Break-even progress
+- Financial value including SREC income
+- Break-even progress and lifetime production since PTO
 - Day-by-day breakdown table
 
 ### Monthly Report
@@ -44,8 +44,8 @@ Sent on the 1st of each month at 6:30 AM covering the previous month.
 - Production vs monthly target progress bar
 - Year-to-date vs annual target
 - Month totals vs previous month with change indicators
-- Financial value with SREC preview greyed out
-- Break-even progress with projected payoff date
+- Financial value including SREC income
+- Break-even progress with projected payoff date and lifetime production since PTO
 - Week-by-week breakdown table
 - All periods clamped to PTO date — no pre-solar zeroes skew the data
 
@@ -101,7 +101,7 @@ cp config.example.json config.json
 | `pseg_delivery_rate` | Delivery component (for reference) |
 | `pseg_supply_rate` | Supply component — update quarterly as PSEG adjusts rates |
 | `pseg_fixed_monthly` | Fixed monthly service charge (solar doesn't eliminate this) |
-| `srec_rate` | SREC value in $/MWh (NJ: $76.50) |
+| `srec_rate` | SREC value in $/MWh (NJ: $85.00) |
 | `net_cost` | Net system cost after incentives ($) |
 | `annual_target_kwh` | Expected annual production from installer estimate |
 | `email_from` | Resend sender address |
@@ -170,30 +170,24 @@ from pathlib import Path
 NEW_RATE = 0.2586  # update this
 cfg = json.loads(Path("config.json").read_text(encoding="utf-8-sig"))
 conn = database.get_conn()
-rows = conn.execute("SELECT date, produced, consumed FROM daily_readings").fetchall()
+rows = conn.execute("SELECT date, produced, consumed, srec_earned FROM daily_readings").fetchall()
 for r in rows:
     kwh = min(r["produced"], r["consumed"])
-    new_val = round(kwh * NEW_RATE, 4)
+    elec_savings = round(kwh * NEW_RATE, 4)
+    total_value = round(elec_savings + r["srec_earned"], 4)
     conn.execute("UPDATE daily_readings SET electricity_savings=?, total_value=? WHERE date=?",
-                 (new_val, new_val, r["date"]))
+                 (elec_savings, total_value, r["date"]))
 conn.commit()
 conn.close()
 ```
 
 ---
 
-## SREC Approval
+## SREC Income
 
-Once you receive SREC approval, re-enable SREC income in `database.py`:
+SRECs are NJ-approved and included in `total_value` (`database.py`) and in the break-even projection (`report_builder.py`). `srec_rate` in `config.json` is $/MWh.
 
-```python
-# Change this line:
-total_value = round(electricity_savings, 4)
-# To:
-total_value = round(electricity_savings + srec_earned, 4)
-```
-
-The SREC preview card in each report already shows the pending value so you know what to expect.
+If your SREC rate changes, update `srec_rate` in `config.json`, then backfill historical rows the same way as an electricity rate change above — recompute `srec_earned = (produced / 1000) * NEW_SREC_RATE` and `total_value = electricity_savings + srec_earned` for each row.
 
 ---
 
@@ -210,7 +204,7 @@ daily_readings (
     self_consumed       REAL,
     srec_earned         REAL,   -- daily SREC accrual
     electricity_savings REAL,   -- min(produced,consumed) × pseg_rate
-    total_value         REAL    -- electricity_savings (+ srec_earned when approved)
+    total_value         REAL    -- electricity_savings + srec_earned
 )
 
 cumulative (
