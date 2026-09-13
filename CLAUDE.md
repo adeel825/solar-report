@@ -12,9 +12,10 @@ stores it in SQLite, generates HTML reports, and sends email digests via Resend.
 solar_report.py      — daily orchestrator (fetch → save → report → email)
 weekly_report.py     — weekly summary report + email (runs every Monday 6am)
 monthly_report.py    — monthly summary report + email (runs 1st of month 6:30am)
+gats_reminder.py     — monthly PJM-EIS GATS meter-reading reminder (runs 15th, user-scheduled)
 email_builder.py     — email-safe HTML for daily report (table layout, inline styles)
 report_builder.py    — full HTML daily report (CSS layout, performance meter)
-send_email.py        — Resend API delivery for daily email
+send_email.py        — Resend API delivery (send_raw() reused by daily report + GATS reminder)
 enphase_api.py       — Enphase Enlighten API v4 (OAuth2, auto token refresh)
 database.py          — SQLite via sqlite3 (idempotent writes, cumulative counters)
 weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am–2pm)
@@ -31,6 +32,7 @@ weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am
 - **Headline**: One-sentence summary with rating opener, all-time percentile (top X%), weather context, % change vs yesterday, tomorrow forecast. Special cases: "🏆 New record" for rank 1, "lowest day yet" for last place.
 - **Net metering bank**: Calibrated to PSE&G's own cumulative net-metering figure (`BANK_ANCHOR_DATE`/`BANK_ANCHOR_KWH` in `database.py`) plus `SUM(net)` for Enphase days after the anchor. Re-anchor from the bill's "Net Metering Program" table whenever a new bill arrives — Enphase's daily-total telemetry drifts from PSE&G's meter over time.
 - **Break-even**: Year-by-year compound model, 3% annual rate escalation on electricity savings; SREC income held flat at $85/MWh and included in annual value.
+- **GATS reading**: `gats_reminder.py`'s monthly reminder computes the cumulative kWh to submit to PJM-EIS GATS as `floor(Enphase /summary energy_lifetime_wh / 1000) - GATS_BASELINE_OFFSET_KWH`. The offset (3103.2 kWh) exists because Enphase's raw lifetime counter starts at monitoring activation (2025-12-31), while GATS's own baseline is 0 kWh at the utility interconnection date (2026-04-06) — the gap is real pre-interconnection production that isn't SREC-eligible. Certificates-to-date are `reading_kwh // 1000`; state (last reading, running certificate/dollar totals) lives in `gats_state.json` (gitignored). Fails loudly via email on a fetch error, a negative/`-1` reading, a decrease from the last reading, or a >3,000 kWh jump (skipped on the first-ever run, whose backlog since interconnection is expected to be large).
 
 ## Configuration (`config.json` — gitignored)
 
@@ -38,7 +40,8 @@ weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am
 |---|---|
 | `pseg_rate` | Combined delivery + supply rate (update quarterly) |
 | `pseg_supply_rate` | Supply component — changes quarterly |
-| `srec_rate` | SREC value in $/MWh |
+| `srec_rate` | SREC value in $/MWh (also used for GATS certificate $ estimates) |
+| `gats_entry_url` | PJM-EIS GATS generation entry page — linked in the monthly GATS reminder email |
 | `net_cost` | Net system cost after incentives |
 | `annual_target_kwh` | 13,400 kWh from installer estimate |
 | `latitude` / `longitude` | Used for Open-Meteo weather API |
@@ -76,6 +79,9 @@ python weekly_report.py 2026-04-14
 # Monthly (previous month by default, or pass year + month)
 python monthly_report.py
 python monthly_report.py 2026 4
+
+# GATS reminder (fetches current lifetime reading, no date argument)
+python gats_reminder.py
 ```
 
 ## Scheduled Tasks (Windows Task Scheduler)
@@ -85,11 +91,14 @@ python monthly_report.py 2026 4
 | `SolarDailyReport` | Daily 5:00 AM |
 | `SolarWeeklyReport` | Monday 6:00 AM |
 | `SolarMonthlyReport` | 1st of month 6:30 AM |
+| `SolarGatsReminder` | 15th of month (user-scheduled, not yet registered) |
 
 ## PTO Date
 
 April 9, 2026. Set in `report_builder.py` and `email_builder.py` as `PTO_DATE = "2026-04-09"`.
-All period calculations are clamped to this date.
+All period calculations are clamped to this date. Distinct from the GATS interconnection
+baseline (2026-04-06) used in `gats_reminder.py` — the two dates are 3 days apart and
+intentionally not shared.
 
 ## Taking Screenshots
 

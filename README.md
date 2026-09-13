@@ -54,6 +54,19 @@ Sent on the 1st of each month at 6:30 AM covering the previous month.
 - Based on actual PSEG bill history (13 months of bills)
 - Updates daily as real earnings accumulate
 
+### GATS Monthly Reminder
+Run manually or scheduled around the 15th, separate from the other reports.
+
+- Fetches your current lifetime production from Enphase, converts it to the cumulative reading PJM-EIS GATS expects (offset for pre-interconnection production — see `gats_reminder.py`), and emails you:
+  - the exact number to paste into GATS's "Meter Reading (kWh)" entry, on its own line, no thousands separators
+  - the reading date to use (today)
+  - delta since your last submitted reading
+  - estimated certificates this period and their dollar value at your `srec_rate`
+  - running totals since April 2026
+  - a direct link to your GATS entry page (`gats_entry_url` in `config.json`)
+- Tracks state in `gats_state.json` (gitignored) — last reading, running certificate/dollar totals
+- **Fails loudly by email** instead of silently skipping a month if: the Enphase API errors, the reading is negative/`-1`, the reading decreased from last month, or it jumped more than 3,000 kWh since last month (this check is skipped on the very first run, since the initial backlog since your interconnection date is expected to be large)
+
 ---
 
 ## Architecture
@@ -64,10 +77,11 @@ solar_report.py          ← daily orchestrator (fetch → save → report → e
 ├── database.py          ← SQLite via sqlite3 (idempotent writes, cumulative counters)
 ├── report_builder.py    ← full HTML report (CSS layout, performance meter, payoff table)
 ├── email_builder.py     ← email-safe HTML (table layout, inline styles, weather widget)
-└── send_email.py        ← Resend API delivery
+└── send_email.py        ← Resend API delivery (send_raw() reused by GATS reminder)
 
 weekly_report.py         ← weekly summary report + email
 monthly_report.py        ← monthly summary report + email
+gats_reminder.py         ← monthly GATS meter-reading reminder (uses enphase_api + send_email)
 ```
 
 ---
@@ -101,7 +115,8 @@ cp config.example.json config.json
 | `pseg_delivery_rate` | Delivery component (for reference) |
 | `pseg_supply_rate` | Supply component — update quarterly as PSEG adjusts rates |
 | `pseg_fixed_monthly` | Fixed monthly service charge (solar doesn't eliminate this) |
-| `srec_rate` | SREC value in $/MWh (NJ: $85.00) |
+| `srec_rate` | SREC value in $/MWh (NJ: $85.00) — also used for GATS reminder $ estimates |
+| `gats_entry_url` | PJM-EIS GATS generation entry page, linked in the monthly GATS reminder email |
 | `net_cost` | Net system cost after incentives ($) |
 | `annual_target_kwh` | Expected annual production from installer estimate |
 | `email_from` | Resend sender address |
@@ -127,13 +142,16 @@ python weekly_report.py
 
 # Monthly report
 python monthly_report.py
+
+# GATS monthly reminder
+python gats_reminder.py
 ```
 
 ---
 
 ## Scheduled Tasks (Windows)
 
-Three scheduled tasks run automatically. To register them:
+Three scheduled tasks run automatically; the GATS reminder is scheduled separately. To register them:
 
 ### Daily — 5:00 AM
 ```powershell
@@ -152,6 +170,11 @@ Register-ScheduledTask -TaskName "SolarWeeklyReport" -Action $action -Trigger $t
 ### Monthly — 1st of month, 6:30 AM
 ```powershell
 schtasks /create /tn "SolarMonthlyReport" /tr "python C:\dev\solar-report\monthly_report.py" /sc monthly /d 1 /st 06:30 /rl highest /f
+```
+
+### GATS Reminder — 15th of month
+```powershell
+schtasks /create /tn "SolarGatsReminder" /tr "C:\dev\solar-report\run_gats_reminder.bat" /sc monthly /d 15 /st 09:00 /rl highest /f
 ```
 
 ---
