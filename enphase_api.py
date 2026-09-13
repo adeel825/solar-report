@@ -105,6 +105,23 @@ def fetch_day(target_date: str | None = None) -> dict:
     }
 
 
+def fetch_lifetime_production_kwh() -> int:
+    """
+    Whole-kWh cumulative lifetime production, for GATS meter-reading entry.
+    Uses GET /systems/{system_id}/summary's energy_lifetime field (Wh) — NOT
+    GET /systems, whose energy_lifetime field always returns -1.
+    Rounds down (GATS wants a conservative whole-kWh reading; fractional
+    kWh carries forward on GATS's side regardless).
+    """
+    cfg = load_config()
+    system_id = cfg["system_id"]
+    data, cfg = api_get(f"{BASE_URL}/{system_id}/summary", {}, cfg)
+    energy_lifetime_wh = data.get("energy_lifetime")
+    if energy_lifetime_wh is None or energy_lifetime_wh < 0:
+        raise ValueError(f"Enphase summary endpoint returned invalid energy_lifetime: {energy_lifetime_wh!r}")
+    return int(energy_lifetime_wh // 1000)
+
+
 def _extract_lifetime_value(data: dict, target_date: str, key: str) -> float:
     """
     energy_lifetime / consumption_lifetime returns:
