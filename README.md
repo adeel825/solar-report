@@ -57,7 +57,7 @@ Sent on the 1st of each month at 6:30 AM covering the previous month.
 ### GATS Monthly Reminder
 Run manually or scheduled around the 15th, separate from the other reports.
 
-- Fetches your current lifetime production from Enphase, converts it to the cumulative reading PJM-EIS GATS expects (offset for pre-interconnection production — see `gats_reminder.py`), and emails you:
+- Fetches your current lifetime production from Enphase and emails you the raw cumulative reading directly — GATS expects the literal meter reading, pre-interconnection production included, no offset applied (verified against readings already submitted by hand — see `gats_reminder.py`):
   - the exact number to paste into GATS's "Meter Reading (kWh)" entry, on its own line, no thousands separators
   - the reading date to use (today)
   - delta since your last submitted reading

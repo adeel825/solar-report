@@ -8,6 +8,11 @@ reading you submit — it issues one SREC-II certificate per whole MWh of
 difference between readings, carrying fractional remainders forward.
 This script's job is just to hand you the correct cumulative number to
 paste in, plus the estimated certificate/dollar impact for your records.
+
+The reading is Enphase's raw lifetime production counter, unadjusted —
+GATS wants the literal cumulative meter reading, not a value zeroed at
+some registration date. Confirmed against readings already submitted by
+hand (see README).
 """
 import json
 import math
@@ -20,17 +25,6 @@ import send_email
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 STATE_PATH = Path(__file__).parent / "gats_state.json"
-
-# GATS baseline: your registered generation entry starts at 0 kWh on your
-# utility interconnection date, 2026-04-06 — NOT the date Enphase started
-# monitoring (2025-12-31). Enphase's raw lifetime counter includes ~3,103.2
-# kWh of pre-interconnection production that GATS never sees, so every
-# reading submitted to GATS is (Enphase's raw lifetime kWh - this offset).
-# Computed 2026-09-13 by summing Enphase's daily energy_lifetime array for
-# all days before 2026-04-06. Should remain stable — both endpoints of that
-# sum are fixed historical facts — but re-derive it if this ever looks off.
-GATS_BASELINE_DATE = "2026-04-06"
-GATS_BASELINE_OFFSET_KWH = 3103.2
 
 # GATS issues 1 certificate per whole MWh of cumulative reading, carrying
 # fractional remainder forward automatically — so certificates-to-date is
@@ -62,11 +56,11 @@ class GatsReadingError(Exception):
 
 def _compute_gats_reading() -> int:
     raw_kwh = enphase_api.fetch_lifetime_production_kwh()
-    gats_kwh = math.floor(raw_kwh - GATS_BASELINE_OFFSET_KWH)
+    gats_kwh = math.floor(raw_kwh)
     if gats_kwh < 0:
         raise GatsReadingError(
             f"Computed GATS reading is negative ({gats_kwh} kWh) — "
-            f"raw Enphase lifetime was {raw_kwh} kWh, offset {GATS_BASELINE_OFFSET_KWH} kWh."
+            f"raw Enphase lifetime was {raw_kwh} kWh."
         )
     return gats_kwh
 
