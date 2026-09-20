@@ -12,7 +12,7 @@ stores it in SQLite, generates HTML reports, and sends email digests via Resend.
 solar_report.py      — daily orchestrator (fetch → save → report → email)
 weekly_report.py     — weekly summary report + email (runs every Monday 6am)
 monthly_report.py    — monthly summary report + email (runs 1st of month 6:30am)
-gats_reminder.py     — monthly PJM-EIS GATS meter-reading reminder (runs 15th, user-scheduled)
+gats_reminder.py     — monthly PJM-EIS GATS meter-reading reminder (runs 2nd Saturday, user-scheduled)
 email_builder.py     — email-safe HTML for daily report (table layout, inline styles)
 report_builder.py    — full HTML daily report (CSS layout, performance meter)
 send_email.py        — Resend API delivery (send_raw() reused by daily report + GATS reminder)
@@ -91,7 +91,7 @@ python gats_reminder.py
 | `SolarDailyReport` | Daily 5:00 AM |
 | `SolarWeeklyReport` | Monday 6:00 AM |
 | `SolarMonthlyReport` | 1st of month 6:30 AM |
-| `SolarGatsReminder` | 15th of month (user-scheduled, not yet registered) |
+| `SolarGatsReminder` | 2nd Saturday of month, 9:00 AM (user-scheduled, not yet registered) |
 
 ## PTO Date
 

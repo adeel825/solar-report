@@ -55,7 +55,7 @@ Sent on the 1st of each month at 6:30 AM covering the previous month.
 - Updates daily as real earnings accumulate
 
 ### GATS Monthly Reminder
-Run manually or scheduled around the 15th, separate from the other reports.
+Run manually or scheduled around the 2nd Saturday of the month, separate from the other reports.
 
 - Fetches your current lifetime production from Enphase and emails you the raw cumulative reading directly — GATS expects the literal meter reading, pre-interconnection production included, no offset applied (verified against readings already submitted by hand — see `gats_reminder.py`):
   - the exact number to paste into GATS's "Meter Reading (kWh)" entry, on its own line, no thousands separators
@@ -172,9 +172,9 @@ Register-ScheduledTask -TaskName "SolarWeeklyReport" -Action $action -Trigger $t
 schtasks /create /tn "SolarMonthlyReport" /tr "python C:\dev\solar-report\monthly_report.py" /sc monthly /d 1 /st 06:30 /rl highest /f
 ```
 
-### GATS Reminder — 15th of month
+### GATS Reminder — 2nd Saturday of month
 ```powershell
-schtasks /create /tn "SolarGatsReminder" /tr "C:\dev\solar-report\run_gats_reminder.bat" /sc monthly /d 15 /st 09:00 /rl highest /f
+schtasks /create /tn "SolarGatsReminder" /tr "C:\dev\solar-report\run_gats_reminder.bat" /sc monthly /mo second /d SAT /st 09:00 /rl highest /f
 ```
 
 ---

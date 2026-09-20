@@ -1,7 +1,7 @@
 """
 Monthly reminder for submitting your PJM-EIS GATS "Meter Reading (kWh)"
-generation entry for NJ SREC-II. Run around the 15th, separate from the
-daily/weekly/monthly production reports.
+generation entry for NJ SREC-II. Run around the 2nd Saturday of the month,
+separate from the daily/weekly/monthly production reports.
 
 GATS computes deltas and certificates itself from whatever cumulative
 reading you submit — it issues one SREC-II certificate per whole MWh of
@@ -122,11 +122,11 @@ def remind() -> None:
             '<span style="color:#aaa">(add gats_entry_url to config.json)</span>'
         )
 
-        subject = f"☀️ GATS reading due — {gats_kwh:,} kWh cumulative — submit by the 20th"
+        subject = f"☀️ GATS reading due — {gats_kwh:,} kWh cumulative"
         html = f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px">
   <h2 style="color:#1a1a1a;margin-bottom:4px">GATS Meter Reading — {today.strftime('%B %Y')}</h2>
-  <p style="font-size:13px;color:#666;margin-top:0">Enter this in PJM-EIS GATS between the 15th and 20th.</p>
+  <p style="font-size:13px;color:#666;margin-top:0">Enter this in PJM-EIS GATS at your convenience.</p>
 
   <div style="background:#E1F5EE;border-radius:10px;padding:16px;margin:16px 0;text-align:center">
     <div style="font-size:11px;color:#085041;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Cumulative reading to enter</div>
@@ -147,7 +147,6 @@ def remind() -> None:
 
   <p style="font-size:12px;color:#999;border-top:1px solid #eee;padding-top:10px">
     Reminder: this is a <strong>cumulative</strong> reading, not a monthly total — GATS computes the delta itself.
-    Entry window closes the 20th.
   </p>
 </div>
 """
