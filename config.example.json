@@ -10,7 +10,8 @@
     "pseg_delivery_rate": 0.059968,
     "pseg_supply_rate": 0.198580,
     "pseg_fixed_monthly": 4.40,
-    "srec_rate": 76.5,
+    "srec_rate": 85,
+    "gats_entry_url": "YOUR_GATS_GENERATION_ENTRY_URL",
     "net_cost": 16610,
     "annual_target_kwh": 13400,
 

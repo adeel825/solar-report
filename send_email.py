@@ -20,15 +20,33 @@ def load_config():
         return json.load(f)
 
 
+def send_raw(subject: str, html_body: str, cfg: dict | None = None) -> str:
+    """Sends a pre-built HTML email via Resend. Returns the Resend message id."""
+    if cfg is None:
+        cfg = load_config()
+
+    for field in ("email_from", "email_to", "resend_api_key"):
+        if not cfg.get(field):
+            raise ValueError(f"Missing '{field}' in config.json")
+
+    resend.api_key = cfg["resend_api_key"]
+
+    params: resend.Emails.SendParams = {
+        "from": cfg["email_from"],
+        "to": [cfg["email_to"]],
+        "subject": subject,
+        "html": html_body,
+    }
+
+    response = resend.Emails.send(params)
+    return response["id"]
+
+
 def send(target_date: str | None = None):
     if target_date is None:
         target_date = (date.today() - timedelta(days=1)).isoformat()
 
     cfg = load_config()
-
-    for field in ("email_from", "email_to", "resend_api_key"):
-        if not cfg.get(field):
-            raise ValueError(f"Missing '{field}' in config.json")
 
     row = database.get_reading(target_date)
     if row is None:
@@ -48,17 +66,8 @@ def send(target_date: str | None = None):
     subject = f"{dot} Solar Report \u2014 {email_builder._fmt_date(target_date)}  |  {produced:.1f} kWh  /  ${total:.2f}"
     html_body = email_builder.build_email(target_date)
 
-    resend.api_key = cfg["resend_api_key"]
-
-    params: resend.Emails.SendParams = {
-        "from": cfg["email_from"],
-        "to": [cfg["email_to"]],
-        "subject": subject,
-        "html": html_body,
-    }
-
-    response = resend.Emails.send(params)
-    print(f"Email sent to {cfg['email_to']} for {target_date} (id: {response['id']})")
+    message_id = send_raw(subject, html_body, cfg)
+    print(f"Email sent to {cfg['email_to']} for {target_date} (id: {message_id})")
 
 
 if __name__ == "__main__":
