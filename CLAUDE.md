@@ -31,7 +31,7 @@ weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am
 - **Email subject**: Colour-dot prefix (🟢🟡🟠🔴) based on production vs daily target ratio.
 - **Headline**: One-sentence summary with rating opener, all-time percentile (top X%), weather context, % change vs yesterday, tomorrow forecast. Special cases: "🏆 New record" for rank 1, "lowest day yet" for last place.
 - **Net metering bank**: Calibrated to PSE&G's own cumulative net-metering figure (`BANK_ANCHOR_DATE`/`BANK_ANCHOR_KWH` in `database.py`) plus `SUM(net)` for Enphase days after the anchor. Re-anchor from the bill's "Net Metering Program" table whenever a new bill arrives — Enphase's daily-total telemetry drifts from PSE&G's meter over time.
-- **Break-even**: Year-by-year compound model, 3% annual rate escalation on electricity savings; SREC income held flat at $85/MWh and included in annual value.
+- **Break-even**: Year-by-year compound model (`report_builder._break_even`). Electricity savings escalate at `rate_escalation` (config, 5%/yr as of 2026-09-20 — set by comparing PSE&G bill history 2022–2025, which showed an 11.6%/yr average effective-rate CAGR driven by a PJM capacity-auction spike now capped by a FERC-approved price collar; 5% splits the difference between that spike and analysts' steadier 3–5%/yr grid-modernization estimate through 2028). Annual consumption cap is `annual_consumption_kwh` (config, 11,400 kWh — the actual 2023–2025 average from PSE&G bills, not just an installer estimate). SREC income held flat at `srec_rate`/MWh and included in annual value. Re-tune both config values periodically against fresh PSE&G bill history (same cadence as the quarterly rate updates below).
 - **GATS reading**: `gats_reminder.py`'s monthly reminder submits Enphase's raw lifetime production counter (`enphase_api.fetch_lifetime_production_kwh()`, floored to whole kWh) directly as the cumulative reading — no offset or adjustment. GATS wants the literal cumulative meter reading; pre-interconnection production is included, matching how readings were actually entered by hand for Apr–Aug 2026 (verified against those entries to within 2 kWh). Certificates-to-date are `reading_kwh // 1000`; state (last reading, running certificate/dollar totals) lives in `gats_state.json` (gitignored, seeded from the manually-submitted Aug 2026 reading of 10,617 kWh). Fails loudly via email on a fetch error, a negative reading, a decrease from the last reading, or a >3,000 kWh jump (skipped on the first-ever run, whose backlog since monitoring activation is expected to be large).
 
 ## Configuration (`config.json` — gitignored)
@@ -44,6 +44,8 @@ weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am
 | `gats_entry_url` | PJM-EIS GATS generation entry page — linked in the monthly GATS reminder email |
 | `net_cost` | Net system cost after incentives |
 | `annual_target_kwh` | 13,400 kWh from installer estimate |
+| `annual_consumption_kwh` | Pre-solar consumption baseline for break-even's savings cap — 11,400 kWh, from actual 2023–2025 PSE&G bill history (see "Break-even" above), not the installer estimate |
+| `rate_escalation` | Assumed annual electricity-rate growth for break-even projections — 0.05 (5%/yr); re-tune against fresh bill history periodically |
 | `latitude` / `longitude` | Used for Open-Meteo weather API |
 | `resend_api_key` | Resend email delivery |
 

@@ -119,6 +119,8 @@ cp config.example.json config.json
 | `gats_entry_url` | PJM-EIS GATS generation entry page, linked in the monthly GATS reminder email |
 | `net_cost` | Net system cost after incentives ($) |
 | `annual_target_kwh` | Expected annual production from installer estimate |
+| `annual_consumption_kwh` | Pre-solar annual consumption, used to cap break-even's electricity-savings estimate — pull this from actual PSE&G bill history (Usage → Bill by Year), not an installer estimate |
+| `rate_escalation` | Assumed annual electricity-rate growth for break-even projections (e.g. `0.05` for 5%/yr) |
 | `email_from` | Resend sender address |
 | `email_to` | Recipient address |
 | `resend_api_key` | Resend API key |
@@ -203,6 +205,12 @@ for r in rows:
 conn.commit()
 conn.close()
 ```
+
+### Break-even model inputs
+
+`annual_consumption_kwh` and `rate_escalation` (used by `report_builder._break_even`) aren't quarterly like the rate itself, but re-check them whenever you've accumulated another year of PSE&G bill history (Usage → Bill by Year in PSE&G's MyAccount, "Dollar ($)" and "Consumption (kWh)" views):
+1. Sum each complete year's kWh and $ to get an actual annual consumption figure and an effective $/kWh — update `annual_consumption_kwh` if it's drifted from what's currently set.
+2. Compare same-month effective rates year over year to estimate a real CAGR, and sanity-check `rate_escalation` against it plus any current NJ rate-outlook news (PJM capacity auction results, BPU announcements) rather than extrapolating a single spike/dip year.
 
 ---
 

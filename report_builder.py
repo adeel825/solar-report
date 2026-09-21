@@ -131,16 +131,17 @@ def _perf_meter(target_date: str, produced: float, monthly_target: int) -> dict:
 def _break_even(cfg: dict, as_of_date: str) -> dict:
     """
     Project break-even using a year-by-year compound model:
-      - Electricity savings escalate 3%/yr (PSE&G historical avg)
-      - SREC held flat at $85.00/yr per 1,000 kWh
-      - Annual consumption baseline: 10,100 kWh (from pre-solar bills)
+      - Electricity savings escalate at rate_escalation/yr (config, re-tuned periodically
+        against actual PSE&G bill history — see README "Electricity Rate Updates")
+      - SREC held flat at srec_rate/yr per 1,000 kWh
+      - Annual consumption baseline: annual_consumption_kwh from config (pre-solar bills)
       - Annual production baseline: annual_target_kwh from config
 
     Already-earned value comes from the actual DB records up to as_of_date.
     Remaining value is projected forward year by year until cumulative >= net_cost.
     """
-    RATE_ESCALATION  = 0.03          # 3% per year
-    ANNUAL_KWH       = 10_100        # pre-solar consumption baseline
+    RATE_ESCALATION  = cfg.get("rate_escalation", 0.05)
+    ANNUAL_KWH       = cfg.get("annual_consumption_kwh", 11_400)
     PTO              = date.fromisoformat(PTO_DATE)
     as_of            = date.fromisoformat(as_of_date)
 
@@ -173,7 +174,7 @@ def _break_even(cfg: dict, as_of_date: str) -> dict:
 
     # --- Year-by-year projection ---
     # Year 1 starts at PTO_DATE. For each year compute:
-    #   electricity_savings = min(annual_prod, ANNUAL_KWH) × rate × (1.03)^yr
+    #   electricity_savings = min(annual_prod, ANNUAL_KWH) × rate × (1 + RATE_ESCALATION)^yr
     #   srec_income         = (annual_prod / 1000) × srec_rate  (flat, added to annual_value)
     pto_year        = PTO.year
     base_elec_saved = min(annual_prod, ANNUAL_KWH) * pseg_rate  # year-0 rate
@@ -611,7 +612,7 @@ def build_report(target_date: str) -> Path:
 
   <div class="divider"></div>
 
-  <div class="section">Payoff projection — electricity savings + SREC income, 3% annual rate escalation</div>
+  <div class="section">Payoff projection — electricity savings + SREC income, {cfg.get("rate_escalation", 0.05) * 100:.0f}% annual rate escalation</div>
   <table style="width:100%;border-collapse:collapse;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
     <thead>
       <tr style="color:#999;text-align:left;border-bottom:2px solid #eee">
