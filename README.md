@@ -57,14 +57,14 @@ Sent on the 1st of each month at 6:30 AM covering the previous month.
 ### GATS Monthly Reminder
 Run manually or scheduled around the 2nd Saturday of the month, separate from the other reports.
 
-- Fetches your current lifetime production from Enphase and emails you the raw cumulative reading directly — GATS expects the literal meter reading, pre-interconnection production included, no offset applied (verified against readings already submitted by hand — see `gats_reminder.py`):
+- Computes Enphase's raw cumulative production as of the **last day of the previous month** (from the daily `/energy_lifetime` history) and emails it to you — GATS expects the literal cumulative reading, pre-interconnection production included, no offset. Month-end matches how GATS entries work (one generation month per entry, meter date inside that month's window) and reproduces the Jul/Aug 2026 readings you entered by hand exactly. Pass `YYYY-MM` to target a different month:
   - the exact number to paste into GATS's "Meter Reading (kWh)" entry, on its own line, no thousands separators
-  - the reading date to use (today)
+  - the generation month and the Meter Reading Date to enter (the month's last day)
   - delta since your last submitted reading
   - estimated certificates this period and their dollar value at your `srec_rate`
   - running totals since April 2026
   - a direct link to your GATS entry page (`gats_entry_url` in `config.json`)
-- Tracks state in `gats_state.json` (gitignored) — last reading, running certificate/dollar totals
+- Tracks state in `gats_state.json` (gitignored) — last reading, running certificate/dollar totals. Keep it equal to the last reading you actually entered in GATS; re-running for an already-recorded period fails with an error email rather than reporting a zero delta
 - **Fails loudly by email** instead of silently skipping a month if: the Enphase API errors, the reading is negative/`-1`, the reading decreased from last month, or it jumped more than 3,000 kWh since last month (this check is skipped on the very first run, since the initial backlog since your interconnection date is expected to be large)
 
 ---

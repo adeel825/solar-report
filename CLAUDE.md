@@ -32,7 +32,7 @@ weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am
 - **Headline**: One-sentence summary with rating opener, all-time percentile (top X%), weather context, % change vs yesterday, tomorrow forecast. Special cases: "🏆 New record" for rank 1, "lowest day yet" for last place.
 - **Net metering bank**: Calibrated to PSE&G's own cumulative net-metering figure (`BANK_ANCHOR_DATE`/`BANK_ANCHOR_KWH` in `database.py`) plus `SUM(net)` for Enphase days after the anchor. Re-anchor from the bill's "Net Metering Program" table whenever a new bill arrives — Enphase's daily-total telemetry drifts from PSE&G's meter over time.
 - **Break-even**: Year-by-year compound model (`report_builder._break_even`). Electricity savings escalate at `rate_escalation` (config, 5%/yr as of 2026-09-20 — set by comparing PSE&G bill history 2022–2025, which showed an 11.6%/yr average effective-rate CAGR driven by a PJM capacity-auction spike now capped by a FERC-approved price collar; 5% splits the difference between that spike and analysts' steadier 3–5%/yr grid-modernization estimate through 2028). Annual consumption cap is `annual_consumption_kwh` (config, 11,400 kWh — the actual 2023–2025 average from PSE&G bills, not just an installer estimate). SREC income held flat at `srec_rate`/MWh and included in annual value. Re-tune both config values periodically against fresh PSE&G bill history (same cadence as the quarterly rate updates below).
-- **GATS reading**: `gats_reminder.py`'s monthly reminder submits Enphase's raw lifetime production counter (`enphase_api.fetch_lifetime_production_kwh()`, floored to whole kWh) directly as the cumulative reading — no offset or adjustment. GATS wants the literal cumulative meter reading; pre-interconnection production is included, matching how readings were actually entered by hand for Apr–Aug 2026 (verified against those entries to within 2 kWh). Certificates-to-date are `reading_kwh // 1000`; state (last reading, running certificate/dollar totals) lives in `gats_state.json` (gitignored, seeded from the manually-submitted Aug 2026 reading of 10,617 kWh). Fails loudly via email on a fetch error, a negative reading, a decrease from the last reading, or a >3,000 kWh jump (skipped on the first-ever run, whose backlog since monitoring activation is expected to be large).
+- **GATS reading**: `gats_reminder.py`'s monthly reminder reports Enphase's raw cumulative production as of the **last day of the previous month** (`enphase_api.fetch_lifetime_production_kwh_as_of`, summed from the daily `/energy_lifetime` array, floored to whole kWh) — no offset or adjustment. GATS entries are per generation month and the meter date must fall in that month's window (1st of the month through the 15th of the next), so a live mid-month snapshot would pull the next month's production into the wrong period. The month-end method reproduced the hand-entered Jul/Aug 2026 readings exactly (9,140 / 10,617). Certificates-to-date are `reading_kwh // 1000`; state (last reading, running certificate/dollar totals) lives in `gats_state.json` (gitignored) and should always reflect the last reading actually *entered in GATS*. Fails loudly via email on a fetch error, a negative reading, a decrease from the last reading, a >3,000 kWh jump, or a re-run for a period already recorded.
 
 ## Configuration (`config.json` — gitignored)
 
@@ -82,8 +82,9 @@ python weekly_report.py 2026-04-14
 python monthly_report.py
 python monthly_report.py 2026 4
 
-# GATS reminder (fetches current lifetime reading, no date argument)
+# GATS reminder (previous month-end reading by default, or pass YYYY-MM)
 python gats_reminder.py
+python gats_reminder.py 2026-09
 ```
 
 ## Scheduled Tasks (Windows Task Scheduler)
