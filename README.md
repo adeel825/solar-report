@@ -60,6 +60,7 @@ Run manually or scheduled around the 2nd Saturday of the month, separate from th
 - Computes Enphase's raw cumulative production as of the **last day of the previous month** (from the daily `/energy_lifetime` history) and emails it to you — GATS expects the literal cumulative reading, pre-interconnection production included, no offset. Month-end matches how GATS entries work (one generation month per entry, meter date inside that month's window) and reproduces the Jul/Aug 2026 readings you entered by hand exactly. Pass `YYYY-MM` to target a different month:
   - the exact number to paste into GATS's "Meter Reading (kWh)" entry, on its own line, no thousands separators
   - the generation month and the Meter Reading Date to enter (the month's last day)
+  - a 6-month table of month-end readings and generated kWh (matches your GATS "Processed Generation" history; the PTO month counts from the day before PTO)
   - delta since your last submitted reading
   - estimated certificates this period and their dollar value at your `srec_rate`
   - running totals since April 2026
