@@ -105,23 +105,30 @@ def fetch_day(target_date: str | None = None) -> dict:
     }
 
 
-def fetch_lifetime_production_kwh_as_of(target_date: str) -> int:
+def fetch_cumulative_kwh_on(dates: list[str]) -> dict[str, int]:
     """
-    Whole-kWh cumulative production through the end of target_date (YYYY-MM-DD),
-    summed from the daily /energy_lifetime array. Matches the month-end readings
-    hand-entered into GATS for Jul/Aug 2026 exactly.
+    Whole-kWh cumulative production through the end of each date (YYYY-MM-DD),
+    summed from the daily /energy_lifetime array in a single API call. Matches
+    the month-end readings hand-entered into GATS for Jul/Aug 2026 exactly.
+    Dates outside the array's range are omitted from the result.
     """
     cfg = load_config()
     data, cfg = api_get(f"{BASE_URL}/{cfg['system_id']}/energy_lifetime", {}, cfg)
     start = date.fromisoformat(data["start_date"])
     values = data.get("production", [])
-    idx = (date.fromisoformat(target_date) - start).days
-    if idx < 0 or idx >= len(values):
-        raise ValueError(
-            f"energy_lifetime has no data for {target_date} "
-            f"(covers {start} to {start + timedelta(days=len(values) - 1)})"
-        )
-    return int(sum(values[: idx + 1]) // 1000)
+    result = {}
+    for d in dates:
+        idx = (date.fromisoformat(d) - start).days
+        if 0 <= idx < len(values):
+            result[d] = int(sum(values[: idx + 1]) // 1000)
+    return result
+
+
+def fetch_lifetime_production_kwh_as_of(target_date: str) -> int:
+    result = fetch_cumulative_kwh_on([target_date])
+    if target_date not in result:
+        raise ValueError(f"energy_lifetime has no data for {target_date}")
+    return result[target_date]
 
 
 def _extract_lifetime_value(data: dict, target_date: str, key: str) -> float:

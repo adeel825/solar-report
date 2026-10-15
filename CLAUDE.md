@@ -11,7 +11,7 @@ stores it in SQLite, generates HTML reports, and sends email digests via Resend.
 ```
 solar_report.py      — daily orchestrator (fetch → save → report → email)
 weekly_report.py     — weekly summary report + email (runs every Monday 6am)
-monthly_report.py    — monthly summary report + email (runs 1st of month 6:30am)
+monthly_report.py    — monthly summary report + email (runs 1st of month 6:30am); includes a 6-month GATS month-end readings table
 gats_reminder.py     — monthly PJM-EIS GATS meter-reading reminder (runs 2nd Saturday, user-scheduled)
 email_builder.py     — email-safe HTML for daily report (table layout, inline styles)
 report_builder.py    — full HTML daily report (CSS layout, performance meter)

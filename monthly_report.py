@@ -16,6 +16,7 @@ from pathlib import Path
 import resend
 
 import database
+import enphase_api
 from report_builder import (
     MONTHLY_TARGETS, PTO_DATE, REPORTS_DIR,
     _fmt_date, _pct, _delta_html, _break_even, _pto_duration, load_config
@@ -103,6 +104,47 @@ def _week_rows(year: int, month: int, days: list[dict]) -> str:
     return "\n".join(rows)
 
 
+def _gats_rows(year: int, month: int, pto: date, n: int = 6) -> str:
+    """Month-end cumulative (GATS) readings for the last n calendar months ending
+    with the report month, clamped to the PTO month. Empty string if unavailable."""
+    months = []
+    y, mo = year, month
+    for _ in range(n + 1):  # one extra month-end to compute the oldest row's delta
+        months.append((y, mo))
+        y, mo = (y, mo - 1) if mo > 1 else (y - 1, 12)
+    months.reverse()
+    ends = {ym: month_bounds(*ym)[1] for ym in months}
+    try:
+        pre_pto = (pto - timedelta(days=1)).isoformat()
+        readings = enphase_api.fetch_cumulative_kwh_on([pre_pto] + [e.isoformat() for e in ends.values()])
+    except Exception as e:
+        print(f"GATS readings table skipped: {e}", file=sys.stderr)
+        return ""
+
+    rows = []
+    for prev_ym, ym in zip(months, months[1:]):
+        if ends[ym] < pto.replace(day=1):
+            continue
+        cur = readings.get(ends[ym].isoformat())
+        if cur is None:
+            continue
+        # GATS counts the PTO month from the day before PTO, not the prior month-end
+        prev_date = max(ends[prev_ym], pto - timedelta(days=1))
+        prev = readings.get(prev_date.isoformat())
+        gen = f"{cur - prev:,}" if prev is not None else "—"
+        rows.append(
+            f'<tr style="border-bottom:1px solid #f5f5f5">'
+            f'<td style="padding:6px 10px;font-size:12px;color:#666;font-family:sans-serif">{ends[ym].strftime("%b %Y")}</td>'
+            f'<td style="padding:6px 10px;font-size:12px;text-align:right;color:#999;font-family:sans-serif">{ends[ym].strftime("%m/%d")}</td>'
+            f'<td style="padding:6px 10px;font-size:12px;text-align:right;font-weight:600;color:#1a1a1a;font-family:sans-serif">{cur:,}</td>'
+            f'<td style="padding:6px 10px;font-size:12px;text-align:right;color:#1D9E75;font-family:sans-serif">{gen}</td>'
+            f'</tr>'
+        )
+    if not rows:
+        return ""
+    return "\n".join(reversed(rows))
+
+
 # ---------------------------------------------------------------------------
 # Report builder
 # ---------------------------------------------------------------------------
@@ -185,12 +227,27 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
     d_total = _delta_html(total_val,  pm["total_value"] if pm else None, "", ".2f")
 
     week_rows_html = _week_rows(year, month, days)
+    gats_rows_html = _gats_rows(year, month, pto)
 
     section = lambda t: (
         f'<p style="margin:20px 0 8px;font-size:11px;font-weight:600;'
         f'text-transform:uppercase;letter-spacing:0.08em;color:#999;'
         f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">{t}</p>'
     )
+
+    gats_section = ""
+    if gats_rows_html:
+        gats_section = f"""{section("GATS meter readings (month-end cumulative)")}
+  <table width="100%" cellpadding="0" cellspacing="0" border="0"
+    style="background:#f8f8f8;border-radius:10px;margin-bottom:4px">
+    <tr style="border-bottom:2px solid #eee">
+      <th style="padding:7px 10px;font-size:11px;color:#999;text-align:left;font-weight:600">Month</th>
+      <th style="padding:7px 10px;font-size:11px;color:#999;text-align:right;font-weight:600">Date</th>
+      <th style="padding:7px 10px;font-size:11px;color:#999;text-align:right;font-weight:600">Reading (kWh)</th>
+      <th style="padding:7px 10px;font-size:11px;color:#999;text-align:right;font-weight:600">Generated</th>
+    </tr>
+    {gats_rows_html}
+  </table>"""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -276,6 +333,9 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
     {_stat_row("Break-even target", be["break_even_date"].strftime("%b %Y") if be["break_even_date"] else "TBD", "")}
     {_stat_row("Lifetime production", f"{lifetime_produced:,.0f} kWh", "", f"since PTO ({_fmt_date(PTO_DATE)})")}
   </table>
+
+  <!-- GATS readings -->
+  {gats_section}
 
   <!-- Week-by-week -->
   {section("Week-by-week breakdown")}

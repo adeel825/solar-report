@@ -46,6 +46,7 @@ Sent on the 1st of each month at 6:30 AM covering the previous month.
 - Month totals vs previous month with change indicators
 - Financial value including SREC income
 - Break-even progress with projected payoff date and lifetime production since PTO
+- **GATS meter readings** — month-end cumulative reading and generation for the last 6 months (same numbers as the GATS reminder, from Enphase's daily history; the PTO month counts from the day before PTO, matching GATS). Omitted if the Enphase call fails
 - Week-by-week breakdown table
 - All periods clamped to PTO date — no pre-solar zeroes skew the data
 
