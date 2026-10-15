@@ -9,19 +9,23 @@ difference between readings, carrying fractional remainders forward.
 This script's job is just to hand you the correct cumulative number to
 paste in, plus the estimated certificate/dollar impact for your records.
 
-The reading is Enphase's raw lifetime production counter, unadjusted —
-GATS wants the literal cumulative meter reading, not a value zeroed at
-some registration date. Confirmed against readings already submitted by
-hand (see README).
+The reading is Enphase's raw cumulative production, unadjusted, as of the
+LAST DAY OF THE PREVIOUS MONTH (month-end, like the hand-entered Apr-Aug
+readings). GATS entries are per generation month with a meter date inside
+that month's window, so a live snapshot taken mid-month would pull the next
+month's production into the wrong period. Pass YYYY-MM to target another month.
 """
+import calendar
 import json
-import math
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import enphase_api
 import send_email
+from report_builder import PTO_DATE
+
+HISTORY_MONTHS = 6
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 STATE_PATH = Path(__file__).parent / "gats_state.json"
@@ -54,15 +58,69 @@ class GatsReadingError(Exception):
     """Raised when the fetched reading fails a sanity check."""
 
 
-def _compute_gats_reading() -> int:
-    raw_kwh = enphase_api.fetch_lifetime_production_kwh()
-    gats_kwh = math.floor(raw_kwh)
+def _reading_period(today: date, period: str | None) -> date:
+    """Last day of the generation month being reported (default: previous month)."""
+    if period:
+        year, month = map(int, period.split("-"))
+    else:
+        prev = today.replace(day=1) - timedelta(days=1)
+        year, month = prev.year, prev.month
+    return date(year, month, calendar.monthrange(year, month)[1])
+
+
+def _history_month_ends(reading_date: date, n: int = HISTORY_MONTHS) -> list[date]:
+    """Month-end dates for the n months ending with reading_date's month, oldest first,
+    plus one earlier month-end so the oldest row's delta can be computed."""
+    ends = []
+    y, m = reading_date.year, reading_date.month
+    for _ in range(n + 1):
+        ends.append(date(y, m, calendar.monthrange(y, m)[1]))
+        y, m = (y, m - 1) if m > 1 else (y - 1, 12)
+    return ends[::-1]
+
+
+def _fetch_readings(reading_date: date) -> dict[str, int]:
+    """One Enphase call covering the entry month, the history table, and the PTO baseline."""
+    pre_pto = date.fromisoformat(PTO_DATE) - timedelta(days=1)
+    dates = [pre_pto] + _history_month_ends(reading_date)
+    return enphase_api.fetch_cumulative_kwh_on([d.isoformat() for d in dates])
+
+
+def _compute_gats_reading(readings: dict[str, int], reading_date: date) -> int:
+    gats_kwh = readings.get(reading_date.isoformat())
+    if gats_kwh is None:
+        raise GatsReadingError(f"Enphase energy_lifetime has no data for {reading_date}.")
     if gats_kwh < 0:
         raise GatsReadingError(
-            f"Computed GATS reading is negative ({gats_kwh} kWh) — "
-            f"raw Enphase lifetime was {raw_kwh} kWh."
+            f"Computed GATS reading is negative ({gats_kwh} kWh) as of {reading_date}."
         )
     return gats_kwh
+
+
+def _history_rows_html(reading_date: date, readings: dict[str, int]) -> str:
+    """Last HISTORY_MONTHS month-end readings, newest first, clamped to the PTO month.
+    The PTO month's baseline is the day before PTO (matches GATS), not the prior month-end."""
+    pto = date.fromisoformat(PTO_DATE)
+    ends = _history_month_ends(reading_date)
+    rows = []
+    for prev_end, end in zip(ends, ends[1:]):
+        cur = readings.get(end.isoformat())
+        if end < pto.replace(day=1) or cur is None:
+            continue
+        prev = readings.get(max(prev_end, pto - timedelta(days=1)).isoformat())
+        gen = f"{cur - prev:,}" if prev is not None else "—"
+        current = end == reading_date
+        bg = "background:#E1F5EE;" if current else ""
+        weight = "700" if current else "600"
+        rows.append(
+            f'<tr style="{bg}border-bottom:1px solid #f0f0f0">'
+            f'<td style="padding:5px 8px;color:#666">{end.strftime("%b %Y")}</td>'
+            f'<td align="right" style="padding:5px 8px;color:#999">{end.strftime("%m/%d/%Y")}</td>'
+            f'<td align="right" style="padding:5px 8px;font-weight:{weight};color:#1a1a1a">{cur:,}</td>'
+            f'<td align="right" style="padding:5px 8px;color:#1D9E75">{gen}</td>'
+            f'</tr>'
+        )
+    return "\n    ".join(reversed(rows))
 
 
 def _send_error_email(cfg: dict, message: str) -> None:
@@ -78,13 +136,24 @@ def _send_error_email(cfg: dict, message: str) -> None:
     send_email.send_raw(subject, html, cfg)
 
 
-def remind() -> None:
+def remind(period: str | None = None) -> None:
     cfg = load_config()
     state = load_state()
     today = date.today()
+    reading_date = _reading_period(today, period)
 
     try:
-        gats_kwh = _compute_gats_reading()
+        last_date = state.get("last_reading_date")
+        if last_date and reading_date.isoformat() <= last_date:
+            raise GatsReadingError(
+                f"A reading dated {last_date} was already recorded, so {reading_date} would "
+                f"produce a zero or negative delta. If the earlier email was never entered "
+                f"in GATS, reset gats_state.json to the last reading actually entered and re-run."
+            )
+
+        readings = _fetch_readings(reading_date)
+        gats_kwh = _compute_gats_reading(readings, reading_date)
+        history_rows_html = _history_rows_html(reading_date, readings)
 
         has_prior = "last_reading_kwh" in state
         prev_kwh = state["last_reading_kwh"] if has_prior else 0
@@ -125,13 +194,13 @@ def remind() -> None:
         subject = f"☀️ GATS reading due — {gats_kwh:,} kWh cumulative"
         html = f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px">
-  <h2 style="color:#1a1a1a;margin-bottom:4px">GATS Meter Reading — {today.strftime('%B %Y')}</h2>
-  <p style="font-size:13px;color:#666;margin-top:0">Enter this in PJM-EIS GATS at your convenience.</p>
+  <h2 style="color:#1a1a1a;margin-bottom:4px">GATS Meter Reading — {reading_date.strftime('%B %Y')}</h2>
+  <p style="font-size:13px;color:#666;margin-top:0">Enter this in the <strong>{reading_date.strftime('%b %Y')}</strong> column of PJM-EIS GATS's Unprocessed Generation.</p>
 
   <div style="background:#E1F5EE;border-radius:10px;padding:16px;margin:16px 0;text-align:center">
     <div style="font-size:11px;color:#085041;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Cumulative reading to enter</div>
     <div style="font-size:36px;font-weight:700;color:#085041;font-family:'SF Mono',Consolas,monospace">{gats_kwh}</div>
-    <div style="font-size:12px;color:#085041;margin-top:4px">reading date: {today.isoformat()}</div>
+    <div style="font-size:12px;color:#085041;margin-top:4px">Meter Reading Date: {reading_date.strftime('%m/%d/%Y')}</div>
   </div>
 
   <table width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;color:#333;margin-bottom:16px">
@@ -141,6 +210,17 @@ def remind() -> None:
     <tr><td colspan="2" style="border-top:1px solid #eee;padding-top:8px"></td></tr>
     <tr><td style="padding:4px 0;color:#666">Running total certificates (since Apr 2026)</td><td align="right" style="font-weight:600">{new_total_certs}</td></tr>
     <tr><td style="padding:4px 0;color:#666">Running total value</td><td align="right" style="font-weight:600;color:#1D9E75">${new_cumulative_dollars:,.2f}</td></tr>
+  </table>
+
+  <p style="margin:20px 0 6px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#999">Recent month-end readings</p>
+  <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;background:#f8f8f8;border-radius:8px;margin-bottom:16px">
+    <tr style="border-bottom:2px solid #eee">
+      <th align="left" style="padding:6px 8px;font-size:11px;color:#999;font-weight:600">Month</th>
+      <th align="right" style="padding:6px 8px;font-size:11px;color:#999;font-weight:600">Reading date</th>
+      <th align="right" style="padding:6px 8px;font-size:11px;color:#999;font-weight:600">Reading (kWh)</th>
+      <th align="right" style="padding:6px 8px;font-size:11px;color:#999;font-weight:600">Generated</th>
+    </tr>
+    {history_rows_html}
   </table>
 
   <p style="font-size:14px;margin-bottom:16px"><strong>GATS entry page:</strong> {gats_link_html}</p>
@@ -153,7 +233,7 @@ def remind() -> None:
         send_email.send_raw(subject, html, cfg)
 
         state.update({
-            "last_reading_date": today.isoformat(),
+            "last_reading_date": reading_date.isoformat(),
             "last_reading_kwh": gats_kwh,
             "cumulative_certificates": new_total_certs,
             "cumulative_dollars": new_cumulative_dollars,
@@ -169,4 +249,4 @@ def remind() -> None:
 
 
 if __name__ == "__main__":
-    remind()
+    remind(sys.argv[1] if len(sys.argv) > 1 else None)
