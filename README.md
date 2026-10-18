@@ -241,7 +241,7 @@ daily_readings (
 cumulative (
     key   TEXT PRIMARY KEY,
     value REAL
-    -- keys: lifetime_kwh, monthly_kwh, srec_progress_kwh, monthly_reset_month
+    -- keys: lifetime_kwh, monthly_kwh, monthly_reset_month
 )
 ```
 
