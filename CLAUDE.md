@@ -55,7 +55,7 @@ weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am
 daily_readings (date PK, produced, consumed, imported, exported, net,
                 self_consumed, srec_earned, electricity_savings, total_value)
 cumulative     (key PK, value — keys: lifetime_kwh, monthly_kwh,
-                srec_progress_kwh, monthly_reset_month)
+                monthly_reset_month)
 ```
 
 ## SDLC Workflow

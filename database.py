@@ -66,7 +66,6 @@ def init_db():
     seeds = [
         ("lifetime_kwh", 0),
         ("monthly_kwh", 0),
-        ("srec_progress_kwh", 0),
         ("monthly_reset_month", 0),
     ]
     for key, val in seeds:
@@ -137,12 +136,6 @@ def save_reading(reading: dict, target_date: str | None = None):
     # Apply only the delta so re-runs are idempotent
     set_cum("lifetime_kwh", round(get_cum("lifetime_kwh") + delta, 3))
     set_cum("monthly_kwh", round(get_cum("monthly_kwh") + delta, 3))
-
-    # SREC progress: apply delta, reset remainder when crossing 1000
-    srec_progress = get_cum("srec_progress_kwh") + delta
-    if srec_progress >= 1000:
-        srec_progress = srec_progress % 1000
-    set_cum("srec_progress_kwh", round(srec_progress, 3))
 
     conn.commit()
     conn.close()
