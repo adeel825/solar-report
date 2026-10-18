@@ -14,6 +14,10 @@ LAST DAY OF THE PREVIOUS MONTH (month-end, like the hand-entered Apr-Aug
 readings). GATS entries are per generation month with a meter date inside
 that month's window, so a live snapshot taken mid-month would pull the next
 month's production into the wrong period. Pass YYYY-MM to target another month.
+
+Everything in the email (delta, certificates, running totals) is derived from
+Enphase's month-end history, so re-running for a month always gives the same
+email and nothing is stored between runs.
 """
 import calendar
 import json
@@ -28,12 +32,14 @@ from report_builder import PTO_DATE
 HISTORY_MONTHS = 6
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
-STATE_PATH = Path(__file__).parent / "gats_state.json"
 
-# GATS issues 1 certificate per whole MWh of cumulative reading, carrying
-# fractional remainder forward automatically — so certificates-to-date is
-# always floor(reading_kwh / 1000); no separate remainder bookkeeping needed.
+# GATS issues 1 certificate per whole MWh of production ABOVE the generator's
+# initial meter reading, carrying fractional remainders forward automatically.
+# The initial reading registered in GATS is 2,990 kWh dated 04/02/2026 (Enphase
+# production before PTO, which is not eligible), so certificates-to-date is
+# floor((reading_kwh - GATS_BASELINE_KWH) / 1000), not floor(reading_kwh / 1000).
 KWH_PER_CERTIFICATE = 1000
+GATS_BASELINE_KWH = 2990
 
 # Sanity bounds for fetched readings (see README "GATS Monthly Reminder").
 MAX_PLAUSIBLE_MONTHLY_JUMP_KWH = 3000
@@ -42,16 +48,6 @@ MAX_PLAUSIBLE_MONTHLY_JUMP_KWH = 3000
 def load_config():
     with open(CONFIG_PATH, encoding="utf-8-sig") as f:
         return json.load(f)
-
-
-def load_state() -> dict:
-    if not STATE_PATH.exists():
-        return {}
-    return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-
-
-def save_state(state: dict) -> None:
-    STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
 class GatsReadingError(Exception):
@@ -97,6 +93,24 @@ def _compute_gats_reading(readings: dict[str, int], reading_date: date) -> int:
     return gats_kwh
 
 
+def _certificates_to_date(reading_kwh: int) -> int:
+    """Whole SREC-II certificates GATS has issued once this cumulative reading is entered."""
+    return max(reading_kwh - GATS_BASELINE_KWH, 0) // KWH_PER_CERTIFICATE
+
+
+def _prior_reading(reading_date: date, readings: dict[str, int]) -> int:
+    """Reading GATS already holds before this entry: the prior month-end, or for the
+    PTO month the day before PTO."""
+    pre_pto = date.fromisoformat(PTO_DATE) - timedelta(days=1)
+    if reading_date <= pre_pto:
+        raise GatsReadingError(f"{reading_date} is before PTO ({PTO_DATE}); nothing to report.")
+    baseline = max(reading_date.replace(day=1) - timedelta(days=1), pre_pto)
+    prev = readings.get(baseline.isoformat())
+    if prev is None:
+        raise GatsReadingError(f"Enphase energy_lifetime has no data for {baseline}.")
+    return prev
+
+
 def _history_rows_html(reading_date: date, readings: dict[str, int]) -> str:
     """Last HISTORY_MONTHS month-end readings, newest first, clamped to the PTO month.
     The PTO month's baseline is the day before PTO (matches GATS), not the prior month-end."""
@@ -128,9 +142,9 @@ def _send_error_email(cfg: dict, message: str) -> None:
     html = f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px">
   <h2 style="color:#D85A30">GATS reminder could not run</h2>
-  <p style="font-size:14px;color:#333">The monthly GATS reading job failed validation and did <strong>not</strong> send a reading or update its state:</p>
+  <p style="font-size:14px;color:#333">The monthly GATS reading job failed validation and did <strong>not</strong> send a reading:</p>
   <pre style="background:#f8f8f8;border-radius:8px;padding:12px;font-size:13px;white-space:pre-wrap">{message}</pre>
-  <p style="font-size:13px;color:#666">Check <code>solar.db</code>/<code>gats_state.json</code> and the Enphase API directly before submitting anything to GATS this month.</p>
+  <p style="font-size:13px;color:#666">Check the Enphase API directly before submitting anything to GATS this month.</p>
 </div>
 """
     send_email.send_raw(subject, html, cfg)
@@ -138,51 +152,33 @@ def _send_error_email(cfg: dict, message: str) -> None:
 
 def remind(period: str | None = None) -> None:
     cfg = load_config()
-    state = load_state()
-    today = date.today()
-    reading_date = _reading_period(today, period)
+    reading_date = _reading_period(date.today(), period)
 
     try:
-        last_date = state.get("last_reading_date")
-        if last_date and reading_date.isoformat() <= last_date:
-            raise GatsReadingError(
-                f"A reading dated {last_date} was already recorded, so {reading_date} would "
-                f"produce a zero or negative delta. If the earlier email was never entered "
-                f"in GATS, reset gats_state.json to the last reading actually entered and re-run."
-            )
-
         readings = _fetch_readings(reading_date)
         gats_kwh = _compute_gats_reading(readings, reading_date)
         history_rows_html = _history_rows_html(reading_date, readings)
-
-        has_prior = "last_reading_kwh" in state
-        prev_kwh = state["last_reading_kwh"] if has_prior else 0
-        prev_certs = state.get("cumulative_certificates", 0)
-        prev_dollars = state.get("cumulative_dollars", 0.0)
+        prev_kwh = _prior_reading(reading_date, readings)
 
         if gats_kwh < prev_kwh:
             raise GatsReadingError(
-                f"New reading ({gats_kwh} kWh) is lower than last submitted reading "
-                f"({prev_kwh} kWh on {state.get('last_reading_date')}). Enphase data may have "
-                f"regressed — do not submit this to GATS."
+                f"New reading ({gats_kwh} kWh) is lower than the prior reading "
+                f"({prev_kwh} kWh). Enphase data may have regressed — do not submit this to GATS."
             )
 
         delta_kwh = gats_kwh - prev_kwh
-
-        # Skip the jump check on the very first run — the initial delta covers the
-        # whole backlog since the interconnection date, which is expected to be large.
-        if has_prior and delta_kwh > MAX_PLAUSIBLE_MONTHLY_JUMP_KWH:
+        if delta_kwh > MAX_PLAUSIBLE_MONTHLY_JUMP_KWH:
             raise GatsReadingError(
-                f"Delta since last reading ({delta_kwh} kWh) exceeds the "
-                f"{MAX_PLAUSIBLE_MONTHLY_JUMP_KWH} kWh sanity bound. Last reading was "
-                f"{prev_kwh} kWh on {state.get('last_reading_date')}, new reading is {gats_kwh} kWh."
+                f"Delta since the prior reading ({delta_kwh} kWh) exceeds the "
+                f"{MAX_PLAUSIBLE_MONTHLY_JUMP_KWH} kWh sanity bound. Prior reading was "
+                f"{prev_kwh} kWh, new reading is {gats_kwh} kWh."
             )
 
-        new_total_certs = gats_kwh // KWH_PER_CERTIFICATE
-        certs_this_period = new_total_certs - prev_certs
+        new_total_certs = _certificates_to_date(gats_kwh)
+        certs_this_period = new_total_certs - _certificates_to_date(prev_kwh)
         srec_rate = cfg["srec_rate"]
         dollars_this_period = round(certs_this_period * srec_rate, 2)
-        new_cumulative_dollars = round(prev_dollars + dollars_this_period, 2)
+        new_cumulative_dollars = round(new_total_certs * srec_rate, 2)
 
         gats_url = cfg.get("gats_entry_url", "").strip()
         gats_link_html = (
@@ -232,14 +228,6 @@ def remind(period: str | None = None) -> None:
 """
         send_email.send_raw(subject, html, cfg)
 
-        state.update({
-            "last_reading_date": reading_date.isoformat(),
-            "last_reading_kwh": gats_kwh,
-            "cumulative_certificates": new_total_certs,
-            "cumulative_dollars": new_cumulative_dollars,
-            "last_reminder_sent_month": today.strftime("%Y-%m"),
-        })
-        save_state(state)
         print(f"GATS reminder sent: {gats_kwh} kWh, +{certs_this_period} certs, +${dollars_this_period:.2f}")
 
     except Exception as e:

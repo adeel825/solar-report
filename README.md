@@ -62,11 +62,11 @@ Run manually or scheduled around the 2nd Saturday of the month, separate from th
   - the generation month and the Meter Reading Date to enter (the month's last day)
   - a 6-month table of month-end readings and generated kWh (matches your GATS "Processed Generation" history; the PTO month counts from the day before PTO)
   - delta since your last submitted reading
-  - estimated certificates this period and their dollar value at your `srec_rate`
+  - estimated certificates this period and their dollar value at your `srec_rate` (counted above the 2,990 kWh initial meter reading registered in GATS, the same way GATS counts them)
   - running totals since April 2026
   - a direct link to your GATS entry page (`gats_entry_url` in `config.json`)
-- Tracks state in `gats_state.json` (gitignored) — last reading, running certificate/dollar totals. Keep it equal to the last reading you actually entered in GATS; re-running for an already-recorded period fails with an error email rather than reporting a zero delta
-- **Fails loudly by email** instead of silently skipping a month if: the Enphase API errors, the reading is negative/`-1`, the reading decreased from last month, or it jumped more than 3,000 kWh since last month (this check is skipped on the very first run, since the initial backlog since your interconnection date is expected to be large)
+- Stateless: delta, certificates and running totals are derived from Enphase's month-end history, so re-running a month resends the same email
+- **Fails loudly by email** instead of silently skipping a month if: the Enphase API errors or has no data for the month, the reading is negative, it decreased from the prior month-end, or it jumped more than 3,000 kWh since then
 
 ---
 
