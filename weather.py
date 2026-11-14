@@ -66,7 +66,7 @@ OUTLOOK_COLOR = {
     "poor": "#D85A30",
 }
 
-SYSTEM_CAPACITY_KW = 11.2
+SYSTEM_CAPACITY_KW = 11.48  # kW DC nameplate (28 x 410 W); AC rating is 8.12 kW
 PEAK_SUN_HOURS = 8
 CLOUD_PENALTY = 0.75  # at 100% cloud cover, production drops to 25% of theoretical max
 
