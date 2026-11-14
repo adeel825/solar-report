@@ -105,21 +105,23 @@ def fetch_day(target_date: str | None = None) -> dict:
     }
 
 
-def fetch_lifetime_production_kwh() -> int:
+def fetch_cumulative_kwh_on(dates: list[str]) -> dict[str, int]:
     """
-    Whole-kWh cumulative lifetime production, for GATS meter-reading entry.
-    Uses GET /systems/{system_id}/summary's energy_lifetime field (Wh) — NOT
-    GET /systems, whose energy_lifetime field always returns -1.
-    Rounds down (GATS wants a conservative whole-kWh reading; fractional
-    kWh carries forward on GATS's side regardless).
+    Whole-kWh cumulative production through the end of each date (YYYY-MM-DD),
+    summed from the daily /energy_lifetime array in a single API call. Matches
+    the month-end readings hand-entered into GATS for Jul/Aug 2026 exactly.
+    Dates outside the array's range are omitted from the result.
     """
     cfg = load_config()
-    system_id = cfg["system_id"]
-    data, cfg = api_get(f"{BASE_URL}/{system_id}/summary", {}, cfg)
-    energy_lifetime_wh = data.get("energy_lifetime")
-    if energy_lifetime_wh is None or energy_lifetime_wh < 0:
-        raise ValueError(f"Enphase summary endpoint returned invalid energy_lifetime: {energy_lifetime_wh!r}")
-    return int(energy_lifetime_wh // 1000)
+    data, cfg = api_get(f"{BASE_URL}/{cfg['system_id']}/energy_lifetime", {}, cfg)
+    start = date.fromisoformat(data["start_date"])
+    values = data.get("production", [])
+    result = {}
+    for d in dates:
+        idx = (date.fromisoformat(d) - start).days
+        if 0 <= idx < len(values):
+            result[d] = int(sum(values[: idx + 1]) // 1000)
+    return result
 
 
 def _extract_lifetime_value(data: dict, target_date: str, key: str) -> float:
