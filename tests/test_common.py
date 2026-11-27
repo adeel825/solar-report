@@ -50,6 +50,14 @@ class TargetTests(unittest.TestCase):
         self.assertAlmostEqual(common.daily_target(2026, 11), 800 / 30)
 
 
+class PracticalMaxTests(unittest.TestCase):
+    def test_ceiling_is_reachable_but_above_the_best_day(self):
+        # Nameplate x sun-hours (92 kWh) is unreachable behind 8.12 kW AC inverters;
+        # the ceiling should sit just above the 70.3 kWh record, not 20 kWh past it.
+        self.assertGreater(common.PRACTICAL_MAX_KWH, 70.3)
+        self.assertLess(common.PRACTICAL_MAX_KWH, common.SYSTEM_CAPACITY_KW * 8)
+
+
 class RatingTests(unittest.TestCase):
     def test_boundaries(self):
         cases = [(0.0, "POOR"), (0.449, "POOR"), (0.45, "FAIR"), (0.699, "FAIR"),

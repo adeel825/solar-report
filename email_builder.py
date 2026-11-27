@@ -8,7 +8,7 @@ from datetime import date, timedelta
 import common
 import database
 import weather as _wx
-from common import PEAK_SUN_HOURS, PTO_DATE, REPORTS_DIR, SPRING_DRAW, SUMMER_DRAW, SYSTEM_CAPACITY_KW, WINTER_DRAW
+from common import PRACTICAL_MAX_KWH, PTO_DATE, REPORTS_DIR, SPRING_DRAW, SUMMER_DRAW, WINTER_DRAW
 from report_builder import (
     _break_even, _darken, _meter_scale, _overflow_split,
     bank_coverage, history_stats, production_rank, weather_context,
@@ -153,7 +153,7 @@ def build_email(target_date: str) -> str:
         )
 
     mtd_pct    = common.pct(monthly_kwh, monthly_target)
-    perf_pct   = common.pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
+    perf_pct   = common.pct(produced, PRACTICAL_MAX_KWH)
     be_pct     = be["pct_paid"]
 
     # Performance rating
@@ -350,8 +350,8 @@ def build_email(target_date: str) -> str:
   <!-- System performance bars -->
   {_section_label("System performance")}
   {bar_row(
-      f"Production vs theoretical max ({SYSTEM_CAPACITY_KW} kW × {PEAK_SUN_HOURS} hrs)",
-      f"{perf_pct:.0f}% &mdash; {produced:.1f} / {SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS:.0f} kWh",
+      "Production vs practical max (clear-day ceiling)",
+      f"{perf_pct:.0f}% &mdash; {produced:.1f} / {PRACTICAL_MAX_KWH} kWh",
       perf_pct, C_GREEN
   )}
   {bar_row(

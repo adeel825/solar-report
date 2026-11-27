@@ -6,7 +6,7 @@ from statistics import mode
 
 import requests
 
-from common import PEAK_SUN_HOURS, ROOT, SYSTEM_CAPACITY_KW
+from common import PRACTICAL_MAX_KWH, ROOT
 
 FORECAST_CACHE_PATH = ROOT / "forecast_cache.json"
 
@@ -69,7 +69,7 @@ OUTLOOK_COLOR = {
     "poor": "#D85A30",
 }
 
-CLOUD_PENALTY = 0.75  # at 100% cloud cover, production drops to 25% of theoretical max
+CLOUD_PENALTY = 0.75  # at 100% cloud cover, production drops to 25% of the practical max
 
 
 def _cloud_factor(cloud_pct: float) -> float:
@@ -140,10 +140,9 @@ def _extract_forecast_day(daily: dict, idx: int) -> dict:
     label, outlook = _WMO_MAP.get(wmo_code, ("Unknown", "fair"))
     factor = _cloud_factor(cloud_pct) if cloud_pct is not None else _cloud_factor(50)
 
-    theoretical_max = SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS
-    mid_est  = round(theoretical_max * factor, 1)
+    mid_est  = round(PRACTICAL_MAX_KWH * factor, 1)
     low_est  = round(mid_est * 0.85, 1)
-    high_est = round(min(mid_est * 1.15, theoretical_max), 1)
+    high_est = round(min(mid_est * 1.15, PRACTICAL_MAX_KWH), 1)
 
     return {
         "date":       date_str,
@@ -299,7 +298,7 @@ def build_headline_daily(produced: float, prev, weather, forecast, daily_target:
         cloud_pct = forecast.get("cloud_pct")
         est_str   = ""
         if cloud_pct is not None:
-            _max    = SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS
+            _max    = PRACTICAL_MAX_KWH
             factor  = _cloud_factor(cloud_pct)
             mid     = _max * factor
             low     = round(mid * 0.85)

@@ -6,7 +6,7 @@ import database
 import rates
 import weather as _wx
 from common import (
-    PEAK_SUN_HOURS, PTO_DATE, REPORTS_DIR, SYSTEM_CAPACITY_KW,
+    PRACTICAL_MAX_KWH, PTO_DATE, REPORTS_DIR,
     SPRING_DRAW, SUMMER_DRAW, WINTER_DRAW,
 )
 
@@ -301,13 +301,13 @@ def _insights(row: dict, monthly_kwh: float, cfg: dict, monthly_target: int, con
     produced = row["produced"]
     net = row["net"]
 
-    perf_pct = common.pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
+    perf_pct = common.pct(produced, PRACTICAL_MAX_KWH)
     if perf_pct >= 80:
-        items.append(("#1D9E75", f"Excellent output — {produced:.1f} kWh is {perf_pct:.0f}% of theoretical max ({SYSTEM_CAPACITY_KW} kW × {PEAK_SUN_HOURS} hrs)"))
+        items.append(("#1D9E75", f"Excellent output — {produced:.1f} kWh is {perf_pct:.0f}% of the {PRACTICAL_MAX_KWH} kWh clear-day max"))
     elif perf_pct >= 50:
-        items.append(("#EF9F27", f"Good output — {produced:.1f} kWh is {perf_pct:.0f}% of theoretical max; cloud cover likely reduced yield"))
+        items.append(("#EF9F27", f"Good output — {produced:.1f} kWh is {perf_pct:.0f}% of practical max; cloud cover likely reduced yield"))
     else:
-        items.append(("#D85A30", f"Low output — {produced:.1f} kWh is {perf_pct:.0f}% of theoretical max; possible clouds or shading"))
+        items.append(("#D85A30", f"Low output — {produced:.1f} kWh is {perf_pct:.0f}% of practical max; possible clouds or shading"))
 
     if not consumption_ok:
         items.append(("#D85A30", f"⚠️ Consumption data unavailable today — Enphase reported an implausible reading ({row['consumed']:,.1f} kWh); likely a meter/communication glitch. Net import/export and bank figures are omitted until corrected."))
@@ -382,7 +382,7 @@ def build_report(target_date: str) -> Path:
     be           = _break_even(cfg, d)
 
     mtd_pct  = common.pct(monthly_kwh, monthly_target)
-    perf_pct = common.pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
+    perf_pct = common.pct(produced, PRACTICAL_MAX_KWH)
 
     bank = bank_coverage()
     banked_kwh, bank_excluded = bank["banked_kwh"], bank["excluded"]
@@ -564,7 +564,7 @@ def build_report(target_date: str) -> Path:
 
   <div class="section">System performance</div>
   <div class="bar-wrap">
-    <div class="bar-label"><span>Production vs theoretical max ({SYSTEM_CAPACITY_KW} kW × {PEAK_SUN_HOURS} hrs)</span><span><strong>{perf_pct:.0f}%</strong> — {produced:.1f} / {SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS:.0f} kWh</span></div>
+    <div class="bar-label"><span>Production vs practical max (clear-day ceiling)</span><span><strong>{perf_pct:.0f}%</strong> — {produced:.1f} / {PRACTICAL_MAX_KWH} kWh</span></div>
     {_bar_html(perf_pct, "#1D9E75")}
   </div>
   <div class="bar-wrap">

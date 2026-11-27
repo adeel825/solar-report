@@ -19,7 +19,7 @@ Sent every morning at 5am covering the previous day.
 - **Key metrics** — net metering credit, month-to-date production, break-even timeline, lifetime production since PTO
 - **Financial value** — electricity savings (what the day's usage would have cost from PSE&G at Residential Service season/tier prices — while the net-metering bank has credit, all usage counts, not just the part covered same-day) plus SREC income
 - **System performance bars** — percentages are uncapped; once a target is beaten the bar fills the track and the amount past 100% shows as a darker overflow segment after a white 100% marker
-  - Production vs. theoretical max
+  - Production vs. practical max — a 72 kWh clear-day ceiling (`PRACTICAL_MAX_KWH` in `common.py`), not nameplate × sun-hours (92 kWh), which the 8.12 kW AC inverters can never reach; also scales the tomorrow forecast estimate
   - Month-to-date vs. monthly target
   - Break-even progress
   - **Net metering bank** — cumulative kWh and dollar value banked since PTO, with days-of-coverage estimate. Calibrated to PSE&G's own cumulative net-metering figure from the latest bill, plus day-level Enphase data for everything after — Enphase's telemetry alone drifts from the utility's meter by a few percent over time
