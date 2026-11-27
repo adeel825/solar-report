@@ -3,51 +3,23 @@ Generates and emails the weekly solar report.
 Covers Mon–Sun of the previous week.
 Run every Monday at 6am — reports on the week just completed.
 """
-import json
-import math
 import os
 import sys
-from pathlib import Path
-
-os.chdir(Path(__file__).parent)
 from datetime import date, timedelta
 from pathlib import Path
 from statistics import mode
 
+os.chdir(Path(__file__).parent)
+
 import requests
-import resend
 
+import common
 import database
-from report_builder import (
-    MONTHLY_TARGETS, PTO_DATE, REPORTS_DIR,
-    _fmt_date, _pct, _delta_html, _break_even, _pto_duration, load_config
-)
-
-# WMO weather code → emoji (shared with email_builder)
-_WMO_EMOJI = {
-    0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️",
-    45: "🌫️", 48: "🌫️",
-    51: "🌦️", 53: "🌦️", 55: "🌦️", 56: "🌦️", 57: "🌦️",
-    61: "🌧️", 63: "🌧️", 65: "🌧️", 66: "🌧️", 67: "🌧️",
-    71: "❄️", 73: "❄️", 75: "❄️", 77: "❄️",
-    80: "🌦️", 81: "🌦️", 82: "🌦️",
-    85: "🌨️", 86: "🌨️",
-    95: "⛈️", 96: "⛈️", 99: "⛈️",
-}
-
-_WMO_DESC = {
-    0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-    45: "Foggy", 48: "Foggy",
-    51: "Light drizzle", 53: "Drizzle", 55: "Heavy drizzle",
-    56: "Freezing drizzle", 57: "Heavy freezing drizzle",
-    61: "Light rain", 63: "Rain", 65: "Heavy rain",
-    66: "Freezing rain", 67: "Heavy freezing rain",
-    71: "Light snow", 73: "Snow", 75: "Heavy snow", 77: "Snow grains",
-    80: "Showers", 81: "Rain showers", 82: "Heavy showers",
-    85: "Snow showers", 86: "Heavy snow showers",
-    95: "Thunderstorm", 96: "Thunderstorm w/ hail", 99: "Thunderstorm w/ hail",
-}
-
+import send_email
+from common import PTO_DATE, REPORTS_DIR
+from email_builder import _section_label, missing_days_note, stat_row
+from report_builder import _break_even, _delta_html
+from weather import _WMO_DESC, _WMO_EMOJI
 
 def _fetch_week_forecast(start: date, lat: float, lon: float) -> dict | None:
     """Fetch 7-day forecast summary from Open-Meteo (avg high, dominant weather code)."""
@@ -90,14 +62,7 @@ def _headline_weekly(this_week: dict, prev_week, daily_tgt: float,
 
     # Rating based on daily average vs target
     ratio = daily_avg / daily_tgt if daily_tgt else 0
-    if ratio >= 0.90:
-        opener = "Strong week"
-    elif ratio >= 0.70:
-        opener = "Solid week"
-    elif ratio >= 0.45:
-        opener = "Average week"
-    else:
-        opener = "Slow week"
+    opener = ("Slow week", "Average week", "Solid week", "Strong week")[common.rating_tier(ratio)]
 
     # vs previous week
     delta_part = ""
@@ -133,7 +98,6 @@ def _headline_weekly(this_week: dict, prev_week, daily_tgt: float,
 
     return f"{opener} — {produced:.1f} kWh total{delta_part}{outlook}"
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
 
 
 # ---------------------------------------------------------------------------
@@ -185,20 +149,6 @@ def _spark_bars(days: list[dict], metric: str = "produced") -> str:
 # Report builder
 # ---------------------------------------------------------------------------
 
-def _stat_row(label: str, value: str, delta_html: str, sub: str = "",
-              color: str = "#1a1a1a", label_color: str = "#555") -> str:
-    sub_td = f'<div style="font-size:11px;color:#999;margin-top:1px">{sub}</div>' if sub else ""
-    return (
-        f'<tr style="border-bottom:1px solid #f0f0f0">'
-        f'<td style="padding:8px 12px;font-size:13px;color:{label_color};'
-        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">{label}</td>'
-        f'<td style="padding:8px 12px;font-size:13px;font-weight:600;color:{color};text-align:right;'
-        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">'
-        f'{value}{delta_html}{sub_td}</td>'
-        f'</tr>'
-    )
-
-
 def build_weekly_report(week_start: date | None = None) -> tuple[Path, str]:
     """
     Build the weekly HTML report.
@@ -206,7 +156,7 @@ def build_weekly_report(week_start: date | None = None) -> tuple[Path, str]:
     Defaults to last Monday (i.e. the completed week).
     Returns (html_path, subject_line).
     """
-    cfg = load_config()
+    cfg = common.load_config()
 
     if week_start is None:
         today = date.today()
@@ -246,23 +196,17 @@ def build_weekly_report(week_start: date | None = None) -> tuple[Path, str]:
     worst_day  = this_week["worst_day"]
     days_count = this_week["days"]
     anomalous_days = this_week["anomalous_days"]
-    missing_note = (
-        f' <span style="color:#D85A30;font-weight:600;font-size:10px">'
-        f'(excludes {anomalous_days} day{"s" if anomalous_days != 1 else ""} — missing data)</span>'
-        if anomalous_days else ""
-    )
+    missing_note = missing_days_note(anomalous_days)
 
     pw = prev_week  # may be None
 
-    month       = week_start.month
-    mtarget     = MONTHLY_TARGETS[month]
-    daily_tgt   = mtarget / 30
+    daily_tgt   = common.daily_target(week_start.year, week_start.month)
 
     week_label  = f"{week_start.strftime('%b %-d')}–{week_end.strftime('%-d, %Y')}" \
                   if sys.platform != "win32" else \
                   f"{week_start.strftime('%b')} {week_start.day}–{week_end.day}, {week_end.year}"
 
-    pto_label   = _pto_duration(end_str)
+    pto_label   = common.pto_duration(end_str)
     be          = _break_even(cfg, end_str)
 
     # Next-week forecast for headline
@@ -276,7 +220,7 @@ def build_weekly_report(week_start: date | None = None) -> tuple[Path, str]:
 
     # Week-over-week deltas
     d_prod  = _delta_html(produced,    pw["produced"]    if pw else None, " kWh")
-    d_cons  = _delta_html(consumed,    pw["consumed"]    if pw else None, " kWh")
+    d_cons  = _delta_html(consumed,    pw["consumed"]    if pw else None, " kWh", invert=True)
     d_elec  = _delta_html(elec_sav,    pw["electricity_savings"] if pw else None, "", ".2f")
     d_srec  = _delta_html(srec_earned, pw["srec_earned"] if pw else None, "", ".2f")
     d_total = _delta_html(total_val,   pw["total_value"] if pw else None, "", ".2f")
@@ -301,11 +245,6 @@ def build_weekly_report(week_start: date | None = None) -> tuple[Path, str]:
         )
     day_table = "\n".join(day_rows)
 
-    section = lambda t: (
-        f'<p style="margin:20px 0 8px;font-size:11px;font-weight:600;'
-        f'text-transform:uppercase;letter-spacing:0.08em;color:#999;'
-        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">{t}</p>'
-    )
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -332,7 +271,7 @@ def build_weekly_report(week_start: date | None = None) -> tuple[Path, str]:
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">{headline}</p>
 
   <!-- Sparkline -->
-  {section("Daily production this week")}
+  {_section_label("Daily production this week")}
   <div style="background:#f8f8f8;border-radius:10px;padding:16px;margin-bottom:4px;text-align:center">
     {spark}
     <div style="font-size:11px;color:#999;margin-top:8px">
@@ -343,38 +282,38 @@ def build_weekly_report(week_start: date | None = None) -> tuple[Path, str]:
   </div>
 
   <!-- Energy summary -->
-  {section("Week totals vs previous week")}
+  {_section_label("Week totals vs previous week")}
   <table width="100%" cellpadding="0" cellspacing="0" border="0"
     style="background:#f8f8f8;border-radius:10px;margin-bottom:4px">
-    {_stat_row("Produced", f"{produced:.1f} kWh", d_prod)}
-    {_stat_row("Consumed", f"{consumed:.1f} kWh", d_cons, missing_note)}
-    {_stat_row("Exported", f"{exported:.1f} kWh", _delta_html(exported, pw["exported"] if pw else None, " kWh"))}
-    {_stat_row("Imported", f"{imported:.1f} kWh", _delta_html(imported, pw["imported"] if pw else None, " kWh"))}
+    {stat_row("Produced", f"{produced:.1f} kWh", d_prod)}
+    {stat_row("Consumed", f"{consumed:.1f} kWh", d_cons, missing_note)}
+    {stat_row("Exported", f"{exported:.1f} kWh", _delta_html(exported, pw["exported"] if pw else None, " kWh"))}
+    {stat_row("Imported", f"{imported:.1f} kWh", _delta_html(imported, pw["imported"] if pw else None, " kWh", invert=True))}
   </table>
 
   <!-- Financial -->
-  {section("Financial value this week")}
+  {_section_label("Financial value this week")}
   <table width="100%" cellpadding="0" cellspacing="0" border="0"
     style="background:#f8f8f8;border-radius:10px;margin-bottom:4px">
-    {_stat_row("Electricity savings", f"${elec_sav:.2f}", d_elec,
+    {stat_row("Electricity savings", f"${elec_sav:.2f}", d_elec,
                f"{consumed:.1f} kWh used × ${(elec_sav / consumed) if consumed else 0:.3f} avg RS price")}
-    {_stat_row("SREC income", f"${srec_earned:.2f}", d_srec,
+    {stat_row("SREC income", f"${srec_earned:.2f}", d_srec,
                f"{produced/1000:.3f} MWh × ${cfg['srec_rate']:.2f}")}
-    {_stat_row("Total value", f"${total_val:.2f}", d_total)}
+    {stat_row("Total value", f"${total_val:.2f}", d_total)}
   </table>
 
   <!-- Break-even -->
-  {section("Break-even progress")}
+  {_section_label("Break-even progress")}
   <table width="100%" cellpadding="0" cellspacing="0" border="0"
     style="background:#f8f8f8;border-radius:10px;margin-bottom:4px">
-    {_stat_row("Projected payoff", be["label"], "",
+    {stat_row("Projected payoff", be["label"], "",
                f"${be['total_earned']:,.0f} earned · ${be['remaining']:,.0f} left")}
-    {_stat_row("% recovered", f"{be['pct_paid']:.2f}%", "")}
-    {_stat_row("Lifetime production", f"{lifetime_produced:,.0f} kWh", "", f"since PTO ({_fmt_date(PTO_DATE)})")}
+    {stat_row("% recovered", f"{be['pct_paid']:.2f}%", "")}
+    {stat_row("Lifetime production", f"{lifetime_produced:,.0f} kWh", "", f"since PTO ({common.fmt_date(PTO_DATE)})")}
   </table>
 
   <!-- Day-by-day -->
-  {section("Day-by-day breakdown")}
+  {_section_label("Day-by-day breakdown")}
   <table width="100%" cellpadding="0" cellspacing="0" border="0"
     style="background:#f8f8f8;border-radius:10px;margin-bottom:4px">
     <tr style="border-bottom:2px solid #eee">
@@ -398,7 +337,7 @@ def build_weekly_report(week_start: date | None = None) -> tuple[Path, str]:
     out_path.write_text(html, encoding="utf-8")
 
     ratio   = (produced / days_count) / daily_tgt if daily_tgt and days_count else 0
-    dot     = "🟢" if ratio >= 0.90 else "🟡" if ratio >= 0.70 else "🟠" if ratio >= 0.45 else "🔴"
+    _, _, dot = common.rating(ratio)
     subject = (
         f"{dot} Weekly Solar — {week_label}  |  "
         f"{produced:.1f} kWh  /  ${total_val:.2f}"
@@ -407,28 +346,18 @@ def build_weekly_report(week_start: date | None = None) -> tuple[Path, str]:
 
 
 def send_weekly(week_start: date | None = None):
-    cfg = load_config()
-    for field in ("email_from", "email_to", "resend_api_key"):
-        if not cfg.get(field):
-            raise ValueError(f"Missing '{field}' in config.json")
-
     path, subject = build_weekly_report(week_start)
-    html = path.read_text(encoding="utf-8")
-
-    resend.api_key = cfg["resend_api_key"]
-    params: resend.Emails.SendParams = {
-        "from": cfg["email_from"],
-        "to": [cfg["email_to"]],
-        "subject": subject,
-        "html": html,
-    }
-    resp = resend.Emails.send(params)
-    print(f"Weekly email sent (id: {resp['id']})")
+    message_id = send_email.send_raw(subject, path.read_text(encoding="utf-8"))
+    print(f"Weekly email sent (id: {message_id})")
     return path
 
 
 if __name__ == "__main__":
     # Optional: pass a Monday date as YYYY-MM-DD, otherwise defaults to last full week
     ws = date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else None
-    path = send_weekly(ws)
-    print(f"Report: {path}")
+    try:
+        print(f"Report: {send_weekly(ws)}")
+    except Exception as e:
+        print(f"Weekly report FAILED: {e}", file=sys.stderr)
+        send_email.send_failure_alert("Weekly solar report", e)
+        sys.exit(1)

@@ -73,18 +73,24 @@ Run manually or scheduled around the 2nd Saturday of the month, separate from th
 ## Architecture
 
 ```
-solar_report.py          ← daily orchestrator (fetch → save → report → email)
+solar_report.py          ← daily orchestrator (fetch → save → report → email; failure alert on error)
 ├── enphase_api.py       ← Enphase Enlighten API v4 (OAuth2 + auto token refresh)
-├── database.py          ← SQLite via sqlite3 (idempotent writes, cumulative counters)
+├── database.py          ← SQLite via sqlite3 (idempotent writes, totals as SQL SUMs)
 │   └── rates.py         ← PSE&G Residential Service season/tier pricing for savings
 ├── report_builder.py    ← full HTML report (CSS layout, performance meter, payoff table)
 ├── email_builder.py     ← email-safe HTML (table layout, inline styles, weather widget)
-└── send_email.py        ← Resend API delivery (send_raw() reused by GATS reminder)
+└── send_email.py        ← Resend delivery: send_raw() for every report, send_failure_alert()
 
 weekly_report.py         ← weekly summary report + email
 monthly_report.py        ← monthly summary report + email
 gats_reminder.py         ← monthly GATS meter-reading reminder (uses enphase_api + send_email)
+
+common.py                ← shared config loading, PTO date, system size, monthly targets, rating scale
+weather.py               ← Open-Meteo weather + forecast (cached per run)
+tests/                   ← unittest suite (no network, temp DB and config)
 ```
+
+If any scheduled job fails — Enphase hasn't published the day yet, an API error, a report bug — it emails a **🔴 … FAILED** alert with the error and traceback and exits non-zero, so a missed report is never silent. A day Enphase hasn't finished processing is never saved as 0 kWh.
 
 ---
 
@@ -149,6 +155,12 @@ python monthly_report.py
 python gats_reminder.py
 ```
 
+### Run the tests
+```bash
+python -m unittest discover -s tests -t .
+```
+The suite uses only the standard library. It runs against a temporary database and a copy of `config.example.json`, makes no network calls, and never touches `solar.db` or `config.json`.
+
 ---
 
 ## Scheduled Tasks (Windows)
@@ -188,7 +200,7 @@ Enphase's day-level net drifts from PSE&G's meter by a few dozen kWh per quarter
 2. Set `BANK_ANCHOR_DATE` / `BANK_ANCHOR_KWH` in `database.py` to that date and the sign-flipped value (PSE&G's −1,904 → `1904.0`).
 3. While you're there, compare each billing period's `OUT − IN` against `SUM(net)` in `daily_readings` for the same dates — a period that's off by much more than ~50 kWh usually means a missing day or a glitch reading.
 
-To repair a single past day, re-fetch it with `enphase_api.fetch_day("YYYY-MM-DD")` and pass it to `database.save_reading()` — but snapshot and restore the `monthly_kwh` / `monthly_reset_month` rows of `cumulative` around the call: `save_reading` resets the live monthly counter when it sees a date from a different month.
+To repair a single past day, run `python solar_report.py YYYY-MM-DD` (re-fetches, saves and re-sends that day's report) or call `database.save_reading(enphase_api.fetch_day("YYYY-MM-DD"))`. Saving a past day automatically recomputes the savings of every later day, since each day's value depends on the bank and month-to-date usage before it.
 
 Last calibrated against the Nov 5, 2026 bill (cumulative −1,904 kWh).
 
@@ -201,16 +213,8 @@ When PSE&G publishes new rates (the "Understanding Your PSE&G Bill" insert, or p
 2. Update `pseg_rs_rates` (and its `effective` date) in `config.json`.
 3. Recompute savings for the affected rows:
 
-```python
-import database
-cfg = database.load_config()
-conn = database.get_conn()
-for r in conn.execute("SELECT * FROM daily_readings WHERE date >= ?", ("2026-06-01",)).fetchall():
-    sav = database.compute_electricity_savings(conn, r["date"], r["produced"], r["consumed"], r["net"], cfg)
-    conn.execute("UPDATE daily_readings SET electricity_savings=?, total_value=? WHERE date=?",
-                 (sav, round(sav + r["srec_earned"], 4), r["date"]))
-conn.commit()
-conn.close()
+```bash
+python -c "import database; print(database.recompute_savings('2026-06-01'), 'rows updated')"
 ```
 
 Calendar months stand in for billing months, so the 600 kWh summer tier boundary is approximate.
@@ -227,7 +231,7 @@ Calendar months stand in for billing months, so the 600 kWh summer tier boundary
 
 SRECs are NJ-approved and included in `total_value` (`database.py`) and in the break-even projection (`report_builder.py`). `srec_rate` in `config.json` is $/MWh.
 
-If your SREC rate changes, update `srec_rate` in `config.json`, then recompute `srec_earned = (produced / 1000) * NEW_SREC_RATE` and `total_value = electricity_savings + srec_earned` for each row.
+If your SREC rate changes, update `srec_rate` in `config.json` and run `database.recompute_savings("<first affected date>")` — it recomputes `srec_earned`, `electricity_savings` and `total_value`.
 
 ---
 
@@ -246,13 +250,9 @@ daily_readings (
     electricity_savings REAL,   -- usage valued at RS season/tier price (rates.py)
     total_value         REAL    -- electricity_savings + srec_earned
 )
-
-cumulative (
-    key   TEXT PRIMARY KEY,
-    value REAL
-    -- keys: lifetime_kwh, monthly_kwh, monthly_reset_month
-)
 ```
+
+Month-to-date and lifetime production are `SUM(produced)` queries over `daily_readings`. The older `cumulative` counter table is no longer read or written; it's harmless if it still exists in an existing `solar.db`.
 
 ---
 
@@ -261,4 +261,4 @@ cumulative (
 - **Rate limiting** — Enphase free tier allows ~10 API calls/minute. The client includes exponential backoff. When backfilling multiple days, add a 30-second gap between runs.
 - **Token refresh** — OAuth2 access tokens are refreshed automatically and saved back to `config.json`.
 - **Import/export accuracy** — Gross daily import and export require 15-minute interval data. The system uses `net = produced − consumed` and displays produced vs. consumed directly. This matches Enphase's reported totals exactly.
-- **PTO date** — Set to your Permission To Operate date in `report_builder.py` (`PTO_DATE = "YYYY-MM-DD"`). All period calculations are clamped to this date.
+- **PTO date** — Set to your Permission To Operate date in `common.py` (`PTO_DATE = "YYYY-MM-DD"`). All period calculations are clamped to this date.

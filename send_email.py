@@ -1,29 +1,24 @@
 """
-Sends the daily solar report via Resend (resend.com).
-Reads email_from, email_to, resend_api_key from config.json.
+Email delivery via Resend (resend.com). Reads email_from, email_to and
+resend_api_key from config.json. send_raw() is shared by every report;
+send_failure_alert() is how scheduled jobs report a failed run.
 """
-import json
+import html
 import sys
+import traceback
 from datetime import date, timedelta
-from pathlib import Path
 
 import resend
 
+import common
 import database
 import email_builder
-
-CONFIG_PATH = Path(__file__).parent / "config.json"
-
-
-def load_config():
-    with open(CONFIG_PATH, encoding="utf-8-sig") as f:
-        return json.load(f)
 
 
 def send_raw(subject: str, html_body: str, cfg: dict | None = None) -> str:
     """Sends a pre-built HTML email via Resend. Returns the Resend message id."""
     if cfg is None:
-        cfg = load_config()
+        cfg = common.load_config()
 
     for field in ("email_from", "email_to", "resend_api_key"):
         if not cfg.get(field):
@@ -42,28 +37,45 @@ def send_raw(subject: str, html_body: str, cfg: dict | None = None) -> str:
     return response["id"]
 
 
+def send_failure_alert(job: str, error: BaseException, cfg: dict | None = None) -> bool:
+    """
+    Emails a "job failed" alert with the error and traceback. Returns True if the
+    alert was sent. Never raises — if email itself is what failed, the caller
+    still exits non-zero and the error is in the job's log.
+    """
+    tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+    body = (
+        '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;max-width:640px">'
+        f'<p style="font-size:15px;color:#D85A30;font-weight:600">{html.escape(job)} did not complete.</p>'
+        f'<p style="font-size:13px;color:#333">{html.escape(str(error))}</p>'
+        f'<pre style="font-size:11px;background:#f5f5f5;padding:12px;border-radius:8px;white-space:pre-wrap">{html.escape(tb)}</pre>'
+        '<p style="font-size:12px;color:#888">Re-run it by hand once the cause is fixed (see README "Running Reports Manually").</p>'
+        '</div>'
+    )
+    try:
+        send_raw(f"\U0001F534 {job} FAILED — needs attention", body, cfg)
+        return True
+    except Exception as alert_error:
+        print(f"      Failure alert could not be sent: {alert_error}", file=sys.stderr)
+        return False
+
+
 def send(target_date: str | None = None):
     if target_date is None:
         target_date = (date.today() - timedelta(days=1)).isoformat()
 
-    cfg = load_config()
+    cfg = common.load_config()
 
     row = database.get_reading(target_date)
     if row is None:
         raise ValueError(f"No DB entry for {target_date} — run solar_report.py first")
 
-    produced  = row["produced"]
-    net       = row["net"]
-    electricity_savings = row["electricity_savings"]
-    srec      = row["srec_earned"]
-    total     = row["total_value"]
+    produced = row["produced"]
+    total = row["total_value"]
+    d = date.fromisoformat(target_date)
+    _, _, dot = common.rating(produced / common.daily_target(d.year, d.month))
 
-    month        = date.fromisoformat(target_date).month
-    daily_target = email_builder.MONTHLY_TARGETS[month] / 30
-    ratio        = produced / daily_target if daily_target else 0
-    dot          = "🟢" if ratio >= 0.90 else "🟡" if ratio >= 0.70 else "🟠" if ratio >= 0.45 else "🔴"
-
-    subject = f"{dot} Solar Report \u2014 {email_builder._fmt_date(target_date)}  |  {produced:.1f} kWh  /  ${total:.2f}"
+    subject = f"{dot} Solar Report — {common.fmt_date(target_date)}  |  {produced:.1f} kWh  /  ${total:.2f}"
     html_body = email_builder.build_email(target_date)
 
     message_id = send_raw(subject, html_body, cfg)

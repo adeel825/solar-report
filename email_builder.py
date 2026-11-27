@@ -3,26 +3,16 @@ Generates email-safe HTML for the daily solar report.
 Uses table-based layout with fully inline styles — compatible with
 Outlook desktop, webmail, Gmail, and mobile clients.
 """
-import calendar
-import json
-from pathlib import Path
 from datetime import date, timedelta
 
+import common
 import database
 import weather as _wx
-from report_builder import _break_even, _darken, _overflow_split, _meter_scale
-
-
-CONFIG_PATH = Path(__file__).parent / "config.json"
-
-MONTHLY_TARGETS = {
-    1: 800, 2: 870, 3: 1100, 4: 1260, 5: 1430,
-    6: 1420, 7: 1490, 8: 1430, 9: 1180, 10: 1050,
-    11: 800, 12: 700,
-}
-SYSTEM_CAPACITY_KW = 11.48  # kW DC nameplate (28 x 410 W); AC rating is 8.12 kW
-PEAK_SUN_HOURS = 8
-PTO_DATE = "2026-04-02"
+from common import PEAK_SUN_HOURS, PTO_DATE, REPORTS_DIR, SPRING_DRAW, SUMMER_DRAW, SYSTEM_CAPACITY_KW, WINTER_DRAW
+from report_builder import (
+    _break_even, _darken, _meter_scale, _overflow_split,
+    bank_coverage, history_stats, production_rank, weather_context,
+)
 
 # Colours
 C_GREEN  = "#1D9E75"
@@ -33,45 +23,6 @@ C_PURPLE = "#9B59B6"
 C_GREY   = "#888888"
 C_BG     = "#f8f8f8"
 C_BORDER = "#e8e8e8"
-
-
-def load_config():
-    with open(CONFIG_PATH, encoding="utf-8-sig") as f:
-        return json.load(f)
-
-
-def _fmt_date(d: str) -> str:
-    dt = date.fromisoformat(d)
-    return dt.strftime("%B") + " " + str(dt.day) + ", " + str(dt.year)
-
-
-def _pct(val, total) -> float:
-    """Percent of total, uncapped — over-target values report their true figure."""
-    if not total:
-        return 0.0
-    return round(val / total * 100, 1)
-
-
-def _pto_duration(target_date: str) -> str:
-    pto = date.fromisoformat(PTO_DATE)
-    target = date.fromisoformat(target_date)
-    delta = (target - pto).days
-    if delta <= 0:
-        return "PTO day"
-    if delta < 14:
-        return f"{delta} day{'s' if delta != 1 else ''} since PTO"
-    if delta < 60:
-        weeks = delta // 7
-        days = delta % 7
-        return f"{weeks}w{f' {days}d' if days else ''} since PTO"
-    if delta < 365:
-        months = delta // 30
-        weeks = (delta % 30) // 7
-        return f"{months}mo{f' {weeks}w' if weeks else ''} since PTO"
-    years = delta // 365
-    months = (delta % 365) // 30
-    return f"{years}yr{f' {months}mo' if months else ''} since PTO"
-
 
 
 def _inline_bar(fill_pct: float, color: str, height: int = 8) -> str:
@@ -106,6 +57,31 @@ def _section_label(text: str) -> str:
     )
 
 
+def stat_row(label: str, value: str, delta_html: str, sub: str = "",
+             color: str = "#1a1a1a", label_color: str = "#555") -> str:
+    """Label / value table row used by the weekly and monthly reports."""
+    sub_td = f'<div style="font-size:11px;color:#999;margin-top:1px">{sub}</div>' if sub else ""
+    return (
+        f'<tr style="border-bottom:1px solid #f0f0f0">'
+        f'<td style="padding:8px 12px;font-size:13px;color:{label_color};'
+        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">{label}</td>'
+        f'<td style="padding:8px 12px;font-size:13px;font-weight:600;color:{color};text-align:right;'
+        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">'
+        f'{value}{delta_html}{sub_td}</td>'
+        f'</tr>'
+    )
+
+
+def missing_days_note(anomalous_days: int) -> str:
+    """Red '(excludes N days — missing data)' tag for period totals."""
+    if not anomalous_days:
+        return ""
+    return (
+        f' <span style="color:#D85A30;font-weight:600;font-size:10px">'
+        f'(excludes {anomalous_days} day{"s" if anomalous_days != 1 else ""} — missing data)</span>'
+    )
+
+
 def _card(label: str, value: str, sub: str, value_color: str = "#1a1a1a") -> str:
     return f"""<td style="padding:4px">
   <table width="100%" cellpadding="12" cellspacing="0" border="0" style="background:{C_BG};border-radius:8px">
@@ -119,58 +95,38 @@ def _card(label: str, value: str, sub: str, value_color: str = "#1a1a1a") -> str
 
 
 def build_email(target_date: str) -> str:
-    cfg = load_config()
+    cfg = common.load_config()
     row = database.get_reading(target_date)
     if row is None:
         raise ValueError(f"No reading found for {target_date}")
-    cum = database.get_cumulative()
 
     d            = row["date"]
     produced     = row["produced"]
     consumed     = row["consumed"]
-    imported     = row["imported"]
-    exported     = row["exported"]
     net          = row["net"]
-    electricity_savings    = row["electricity_savings"]
+    electricity_savings = row["electricity_savings"]
     srec_earned  = row["srec_earned"]
     total_value  = row["total_value"]
-    monthly_kwh  = cum["monthly_kwh"]
+    monthly_kwh  = database.get_month_to_date(d)
     lifetime_produced = database.get_lifetime_production(PTO_DATE)
 
     report_dt      = date.fromisoformat(d)
-    month          = report_dt.month
-    pto            = date.fromisoformat(PTO_DATE)
-    days_in_month  = calendar.monthrange(report_dt.year, month)[1]
-    if report_dt.year == pto.year and month == pto.month:
-        operating_days = days_in_month - (pto.day - 1)
-        monthly_target = round(MONTHLY_TARGETS[month] * operating_days / days_in_month)
-    else:
-        monthly_target = MONTHLY_TARGETS[month]
+    monthly_target = common.monthly_target(report_dt.year, report_dt.month)
+    daily_target   = common.daily_target(report_dt.year, report_dt.month)
     month_name     = report_dt.strftime("%B")
-    date_display   = _fmt_date(d)
-    pto_label      = _pto_duration(d)
+    date_display   = common.fmt_date(d)
+    pto_label      = common.pto_duration(d)
     be             = _break_even(cfg, d)
 
-    # Net metering bank since PTO — seasonal day-coverage
-    WINTER_DRAW = 19.0   # kWh/day — PSE&G bill Jan–Feb average
-    SPRING_DRAW = 22.7   # kWh/day — PSE&G bill Mar–May average
-    SUMMER_DRAW = 52.0   # kWh/day — PSE&G bill Jun–Aug peak
-    _bank = database.get_net_bank(PTO_DATE)
-    banked_kwh    = _bank["banked_kwh"]
-    bank_excluded = _bank["anomalous_days"]
-    winter_days = round(banked_kwh / WINTER_DRAW) if banked_kwh > 0 else 0
-    spring_days = round(banked_kwh / SPRING_DRAW) if banked_kwh > 0 else 0
-    summer_days = round(banked_kwh / SUMMER_DRAW) if banked_kwh > 0 else 0
+    bank = bank_coverage()
+    banked_kwh, bank_excluded = bank["banked_kwh"], bank["excluded"]
+    winter_days, spring_days, summer_days = bank["winter_days"], bank["spring_days"], bank["summer_days"]
 
     # Weather — silently skipped if API unavailable
-    _lat = cfg.get("latitude")
-    _lon = cfg.get("longitude")
-    weather  = _wx.fetch_day_weather(d, _lat, _lon) if (_lat and _lon) else None
-    forecast = _wx.fetch_tomorrow_forecast(_lat, _lon, d) if (_lat and _lon) else None
+    weather, forecast = weather_context(d, cfg)
 
     # Previous day for change indicators
-    prev_date = (date.fromisoformat(d) - timedelta(days=1)).isoformat()
-    prev = database.get_reading(prev_date)
+    prev = database.get_reading((report_dt - timedelta(days=1)).isoformat())
 
     # Consumption sanity check — a meter/comm glitch can dump a fabricated
     # reading into a single day. Treat it as missing data rather than display it.
@@ -196,47 +152,23 @@ def build_email(target_date: str) -> str:
             f'{arrow} {diff:+{fmt}}{unit}</span>'
         )
 
-    mtd_pct    = _pct(monthly_kwh, monthly_target)
-    perf_pct   = _pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
+    mtd_pct    = common.pct(monthly_kwh, monthly_target)
+    perf_pct   = common.pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
     be_pct     = be["pct_paid"]
-    net_sign  = "+" if net >= 0 else ""
-    net_color = C_GREEN if net >= 0 else C_RED
 
     # Performance rating
-    daily_target = monthly_target / 30
     ratio = produced / daily_target if daily_target else 0
     meter = _meter_scale(produced, daily_target)
     zw = (meter["z_poor"], round(meter["z_fair"] - meter["z_poor"], 1),
           round(meter["z_good"] - meter["z_fair"], 1), round(100 - meter["z_good"], 1))
-    if ratio >= 0.90:
-        rating, rating_color = "EXCELLENT", C_GREEN
-    elif ratio >= 0.70:
-        rating, rating_color = "GOOD", "#5BAD6F"
-    elif ratio >= 0.45:
-        rating, rating_color = "FAIR", C_AMBER
-    else:
-        rating, rating_color = "POOR", C_RED
+    rating, rating_color, _ = common.rating(ratio)
 
     # Historical context line + rank
-    conn = database.get_conn()
-    hist = conn.execute(
-        "SELECT AVG(produced) as avg, MAX(produced) as best, COUNT(*) as cnt "
-        "FROM daily_readings WHERE date < ?", (d,)
-    ).fetchone()
-    rank_row = conn.execute(
-        "SELECT COUNT(*) as total, SUM(CASE WHEN produced > ? THEN 1 ELSE 0 END) as above "
-        "FROM daily_readings WHERE date <= ?",
-        (produced, d)
-    ).fetchone()
-    conn.close()
+    hist = history_stats(d)
     hist_line = ""
-    if hist and hist["cnt"] and hist["cnt"] > 0:
-        hist_line = f" &nbsp;·&nbsp; Avg {hist['avg']:.1f} kWh ({hist['cnt']}d) &nbsp;·&nbsp; Best {hist['best']:.1f} kWh"
-
-    rank, rank_total = 0, 0
-    if rank_row and rank_row["total"]:
-        rank_total = rank_row["total"]
-        rank       = (rank_row["above"] or 0) + 1
+    if hist["count"]:
+        hist_line = f" &nbsp;·&nbsp; Avg {hist['avg']:.1f} kWh ({hist['count']}d) &nbsp;·&nbsp; Best {hist['best']:.1f} kWh"
+    rank, rank_total = production_rank(produced, d)
 
     # Headline summary
     headline = _wx.build_headline_daily(produced, prev, weather, forecast, daily_target, rank, rank_total)
@@ -260,6 +192,7 @@ def build_email(target_date: str) -> str:
     net_label  = "kWh net export" if net >= 0 else "kWh net import"
     net_sign   = "+" if net >= 0 else ""
 
+    elec_sub_html = database.savings_basis_label(d, produced, consumed, cfg)
     warning_banner_html = ""
     if consumption_ok:
         consumed_cell_html = (
@@ -272,7 +205,6 @@ def build_email(target_date: str) -> str:
             f'<div style="font-size:11px;color:#666;margin-top:2px">{net_label}{_delta(net, "net")}</div>'
         )
         net_card_value, net_card_color = f"{net_sign}{net:.1f} kWh", net_color
-        elec_sub_html = database.savings_basis_label(d, produced, consumed)
     else:
         warning_banner_html = (
             f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFF3E0;border:1px solid #FFCC80;'
@@ -286,7 +218,6 @@ def build_email(target_date: str) -> str:
         net_cell_border = "#ddd"
         net_cell_html = '<div style="font-size:14px;font-weight:600;color:#bbb">No data</div><div style="font-size:11px;color:#666;margin-top:2px">kWh net</div>'
         net_card_value, net_card_color = "No data", C_GREY
-        elec_sub_html = database.savings_basis_label(d, produced, consumed)
 
     flow_row = (
         flow_cell(f"{produced:.1f}", f"kWh produced{_delta(produced, 'produced')}", C_GREEN) +
@@ -385,7 +316,7 @@ def build_email(target_date: str) -> str:
           <td style="font-size:10px;color:#bbb">Excellent</td>
         </tr>
       </table>
-      <p style="font-size:11px;color:#888;margin:6px 0 0">Today {produced:.1f} kWh &nbsp;·&nbsp; Monthly daily target {monthly_target//30:.0f} kWh{hist_line}</p>
+      <p style="font-size:11px;color:#888;margin:6px 0 0">Today {produced:.1f} kWh &nbsp;·&nbsp; Monthly daily target {daily_target:.0f} kWh{hist_line}</p>
     </td></tr>
   </table>
 
@@ -402,7 +333,7 @@ def build_email(target_date: str) -> str:
       {_card("Net metering credit", net_card_value, "net today", net_card_color)}
       {_card("Month-to-date", f"{monthly_kwh:.1f} kWh", f"of {monthly_target:,} {month_name} target")}
       {_card("Break-even", be['label'], f"${be['total_earned']:,.0f} of ${cfg['net_cost']:,} earned", C_BLUE)}
-      {_card("Lifetime production", f"{lifetime_produced:,.0f} kWh", f"since PTO ({_fmt_date(PTO_DATE)})", C_GREEN)}
+      {_card("Lifetime production", f"{lifetime_produced:,.0f} kWh", f"since PTO ({common.fmt_date(PTO_DATE)})", C_GREEN)}
     </tr>
   </table>
 
@@ -484,6 +415,7 @@ if __name__ == "__main__":
     import sys
     target = sys.argv[1] if len(sys.argv) > 1 else (date.today() - timedelta(days=1)).isoformat()
     html = build_email(target)
-    out = Path(__file__).parent / "reports" / f"{target}-email.html"
+    REPORTS_DIR.mkdir(exist_ok=True)
+    out = REPORTS_DIR / f"{target}-email.html"
     out.write_text(html, encoding="utf-8")
     print(f"Email preview written to: {out}")

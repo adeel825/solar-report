@@ -4,25 +4,20 @@ Covers the full previous calendar month.
 Run on the 1st of each month at 6am.
 """
 import calendar
-import json
 import os
 import sys
-from pathlib import Path
-
-os.chdir(Path(__file__).parent)
 from datetime import date, timedelta
 from pathlib import Path
 
-import resend
+os.chdir(Path(__file__).parent)
 
+import common
 import database
-from report_builder import (
-    MONTHLY_TARGETS, PTO_DATE, REPORTS_DIR,
-    _fmt_date, _pct, _delta_html, _break_even, _pto_duration, load_config
-)
-from email_builder import _inline_bar
+import send_email
+from common import PTO_DATE, REPORTS_DIR
+from email_builder import _inline_bar, _section_label, missing_days_note, stat_row
+from report_builder import _break_even, _delta_html
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
 
 
 # ---------------------------------------------------------------------------
@@ -44,20 +39,6 @@ def prev_month_bounds(year: int, month: int) -> tuple[date, date]:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _stat_row(label: str, value: str, delta_html: str, sub: str = "",
-              color: str = "#1a1a1a", label_color: str = "#555") -> str:
-    sub_td = f'<div style="font-size:11px;color:#999;margin-top:1px">{sub}</div>' if sub else ""
-    return (
-        f'<tr style="border-bottom:1px solid #f0f0f0">'
-        f'<td style="padding:8px 12px;font-size:13px;color:{label_color};'
-        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">{label}</td>'
-        f'<td style="padding:8px 12px;font-size:13px;font-weight:600;color:{color};text-align:right;'
-        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">'
-        f'{value}{delta_html}{sub_td}</td>'
-        f'</tr>'
-    )
-
 
 def _week_rows(year: int, month: int, days: list[dict]) -> str:
     """Build week-by-week summary rows for the month."""
@@ -96,7 +77,7 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
     Defaults to the previous calendar month.
     Returns (html_path, subject_line).
     """
-    cfg = load_config()
+    cfg = common.load_config()
 
     if year is None or month is None:
         today = date.today()
@@ -133,21 +114,15 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
     worst_day    = this_month["worst_day"]
     days_count   = this_month["days"]
     anomalous_days = this_month["anomalous_days"]
-    missing_note = (
-        f' <span style="color:#D85A30;font-weight:600;font-size:10px">'
-        f'(excludes {anomalous_days} day{"s" if anomalous_days != 1 else ""} — missing data)</span>'
-        if anomalous_days else ""
-    )
+    missing_note = missing_days_note(anomalous_days)
 
     pm = prev_month
 
-    # Targets — prorate if the month was partial (e.g. first month after PTO)
-    first_of_month = date(year, month, 1)
+    # Target — prorated for the PTO month
+    m_target       = common.monthly_target(year, month)
     days_in_month  = calendar.monthrange(year, month)[1]
-    operating_days = days_in_month - (start - first_of_month).days
-    full_target    = MONTHLY_TARGETS[month]
-    m_target       = round(full_target * operating_days / days_in_month)
-    mtd_pct        = _pct(produced, m_target)
+    operating_days = days_in_month - (start.day - 1)
+    mtd_pct        = common.pct(produced, m_target)
     month_name     = start.strftime("%B")
 
     # YTD — clamp to PTO
@@ -155,25 +130,20 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
     ytd          = database.get_period_summary(ytd_start, end_s)
     ytd_produced = ytd["produced"] if ytd else 0
     annual_target = cfg.get("annual_target_kwh", 13400)
-    ytd_pct      = _pct(ytd_produced, annual_target)
+    ytd_pct      = common.pct(ytd_produced, annual_target)
 
-    pto_label    = _pto_duration(end_s)
+    pto_label    = common.pto_duration(end_s)
     be           = _break_even(cfg, end_s)
 
     # Deltas
     d_prod  = _delta_html(produced,   pm["produced"]    if pm else None, " kWh")
-    d_cons  = _delta_html(consumed,   pm["consumed"]    if pm else None, " kWh")
+    d_cons  = _delta_html(consumed,   pm["consumed"]    if pm else None, " kWh", invert=True)
     d_elec  = _delta_html(elec_sav,   pm["electricity_savings"] if pm else None, "", ".2f")
     d_srec  = _delta_html(srec_earned,pm["srec_earned"] if pm else None, "", ".2f")
     d_total = _delta_html(total_val,  pm["total_value"] if pm else None, "", ".2f")
 
     week_rows_html = _week_rows(year, month, days)
 
-    section = lambda t: (
-        f'<p style="margin:20px 0 8px;font-size:11px;font-weight:600;'
-        f'text-transform:uppercase;letter-spacing:0.08em;color:#999;'
-        f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">{t}</p>'
-    )
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -196,7 +166,7 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
     font-size:12px;font-weight:600;padding:3px 12px;margin-bottom:20px">{pto_label}</div>
 
   <!-- Monthly target progress -->
-  {section("Production vs monthly target")}
+  {_section_label("Production vs monthly target")}
   <div style="background:#f8f8f8;border-radius:10px;padding:14px;margin-bottom:4px">
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:8px">
       <tr>
@@ -215,7 +185,7 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
   </div>
 
   <!-- YTD progress -->
-  {section("Year-to-date vs annual target")}
+  {_section_label("Year-to-date vs annual target")}
   <div style="background:#f8f8f8;border-radius:10px;padding:14px;margin-bottom:4px">
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:8px">
       <tr>
@@ -229,39 +199,39 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
   </div>
 
   <!-- Energy summary -->
-  {section("Month totals vs previous month")}
+  {_section_label("Month totals vs previous month")}
   <table width="100%" cellpadding="0" cellspacing="0" border="0"
     style="background:#f8f8f8;border-radius:10px;margin-bottom:4px">
-    {_stat_row("Produced", f"{produced:.1f} kWh", d_prod)}
-    {_stat_row("Consumed", f"{consumed:.1f} kWh", d_cons, missing_note)}
-    {_stat_row("Exported", f"{exported:.1f} kWh", _delta_html(exported, pm["exported"] if pm else None, " kWh"))}
-    {_stat_row("Imported", f"{imported:.1f} kWh", _delta_html(imported, pm["imported"] if pm else None, " kWh"))}
+    {stat_row("Produced", f"{produced:.1f} kWh", d_prod)}
+    {stat_row("Consumed", f"{consumed:.1f} kWh", d_cons, missing_note)}
+    {stat_row("Exported", f"{exported:.1f} kWh", _delta_html(exported, pm["exported"] if pm else None, " kWh"))}
+    {stat_row("Imported", f"{imported:.1f} kWh", _delta_html(imported, pm["imported"] if pm else None, " kWh", invert=True))}
   </table>
 
   <!-- Financial -->
-  {section("Financial value this month")}
+  {_section_label("Financial value this month")}
   <table width="100%" cellpadding="0" cellspacing="0" border="0"
     style="background:#f8f8f8;border-radius:10px;margin-bottom:4px">
-    {_stat_row("Electricity savings", f"${elec_sav:.2f}", d_elec,
+    {stat_row("Electricity savings", f"${elec_sav:.2f}", d_elec,
                f"{consumed:.1f} kWh used × ${(elec_sav / consumed) if consumed else 0:.3f} avg RS price")}
-    {_stat_row("SREC income", f"${srec_earned:.2f}", d_srec,
+    {stat_row("SREC income", f"${srec_earned:.2f}", d_srec,
                f"{produced/1000:.3f} MWh × ${cfg['srec_rate']:.2f}")}
-    {_stat_row("Total value", f"${total_val:.2f}", d_total)}
+    {stat_row("Total value", f"${total_val:.2f}", d_total)}
   </table>
 
   <!-- Break-even -->
-  {section("Break-even progress")}
+  {_section_label("Break-even progress")}
   <table width="100%" cellpadding="0" cellspacing="0" border="0"
     style="background:#f8f8f8;border-radius:10px;margin-bottom:4px">
-    {_stat_row("Projected payoff", be["label"], "",
+    {stat_row("Projected payoff", be["label"], "",
                f"${be['total_earned']:,.0f} earned · ${be['remaining']:,.0f} left")}
-    {_stat_row("% recovered", f"{be['pct_paid']:.2f}%", "")}
-    {_stat_row("Break-even target", be["break_even_date"].strftime("%b %Y") if be["break_even_date"] else "TBD", "")}
-    {_stat_row("Lifetime production", f"{lifetime_produced:,.0f} kWh", "", f"since PTO ({_fmt_date(PTO_DATE)})")}
+    {stat_row("% recovered", f"{be['pct_paid']:.2f}%", "")}
+    {stat_row("Break-even target", be["break_even_date"].strftime("%b %Y") if be["break_even_date"] else "TBD", "")}
+    {stat_row("Lifetime production", f"{lifetime_produced:,.0f} kWh", "", f"since PTO ({common.fmt_date(PTO_DATE)})")}
   </table>
 
   <!-- Week-by-week -->
-  {section("Week-by-week breakdown")}
+  {_section_label("Week-by-week breakdown")}
   <table width="100%" cellpadding="0" cellspacing="0" border="0"
     style="background:#f8f8f8;border-radius:10px;margin-bottom:4px">
     <tr style="border-bottom:2px solid #eee">
@@ -285,7 +255,7 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
     out_path.write_text(html, encoding="utf-8")
 
     ratio   = produced / m_target if m_target else 0
-    dot     = "🟢" if ratio >= 0.90 else "🟡" if ratio >= 0.70 else "🟠" if ratio >= 0.45 else "🔴"
+    _, _, dot = common.rating(ratio)
     subject = (
         f"{dot} Monthly Solar — {month_name} {year}  |  "
         f"{produced:.1f} kWh  /  ${total_val:.2f}"
@@ -294,23 +264,9 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
 
 
 def send_monthly(year: int | None = None, month: int | None = None):
-    cfg = load_config()
-    for field in ("email_from", "email_to", "resend_api_key"):
-        if not cfg.get(field):
-            raise ValueError(f"Missing '{field}' in config.json")
-
     path, subject = build_monthly_report(year, month)
-    html = path.read_text(encoding="utf-8")
-
-    resend.api_key = cfg["resend_api_key"]
-    params: resend.Emails.SendParams = {
-        "from": cfg["email_from"],
-        "to": [cfg["email_to"]],
-        "subject": subject,
-        "html": html,
-    }
-    resp = resend.Emails.send(params)
-    print(f"Monthly email sent (id: {resp['id']})")
+    message_id = send_email.send_raw(subject, path.read_text(encoding="utf-8"))
+    print(f"Monthly email sent (id: {message_id})")
     return path
 
 
@@ -320,5 +276,9 @@ if __name__ == "__main__":
         y, m = int(sys.argv[1]), int(sys.argv[2])
     else:
         y, m = None, None
-    path = send_monthly(y, m)
-    print(f"Report: {path}")
+    try:
+        print(f"Report: {send_monthly(y, m)}")
+    except Exception as e:
+        print(f"Monthly report FAILED: {e}", file=sys.stderr)
+        send_email.send_failure_alert("Monthly solar report", e)
+        sys.exit(1)
