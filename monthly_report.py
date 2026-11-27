@@ -20,6 +20,7 @@ from report_builder import (
     MONTHLY_TARGETS, PTO_DATE, REPORTS_DIR,
     _fmt_date, _pct, _delta_html, _break_even, _pto_duration, load_config
 )
+from email_builder import _inline_bar
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
@@ -55,24 +56,6 @@ def _stat_row(label: str, value: str, delta_html: str, sub: str = "",
         f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">'
         f'{value}{delta_html}{sub_td}</td>'
         f'</tr>'
-    )
-
-
-def _inline_bar(pct: float, color: str, height: int = 8) -> str:
-    pct = min(max(pct, 0), 100)
-    empty = 100 - pct
-    filled = (
-        f'<td width="{pct}%" style="height:{height}px;background:{color};'
-        f'border-radius:{height//2}px;line-height:0;font-size:0">&nbsp;</td>'
-    )
-    empty_td = (
-        f'<td width="{empty}%" style="height:{height}px;background:#e8e8e8;'
-        f'line-height:0;font-size:0">&nbsp;</td>'
-    ) if empty > 0 else ""
-    return (
-        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" '
-        f'style="border-radius:{height//2}px;overflow:hidden;background:#e8e8e8">'
-        f'<tr>{filled}{empty_td}</tr></table>'
     )
 
 
