@@ -5,21 +5,30 @@
     "system_id": "YOUR_ENPHASE_SYSTEM_ID",
     "access_token": "YOUR_ENPHASE_ACCESS_TOKEN",
     "refresh_token": "YOUR_ENPHASE_REFRESH_TOKEN",
-
-    "pseg_rate": 0.2586,
-    "pseg_delivery_rate": 0.059968,
-    "pseg_supply_rate": 0.198580,
-    "pseg_fixed_monthly": 4.40,
+    "pseg_rs_rates": {
+        "effective": "2026-06-01",
+        "source": "PSE&G 'Understanding Your PSE&G Bill' (Aug 2026), Residential Service (RS) \u2014 distribution + per-kWh riders + BGS + transmission",
+        "winter": 0.248622,
+        "summer_first_tier": 0.280858,
+        "summer_over_tier": 0.294429,
+        "tier_kwh": 600,
+        "summer_months": [
+            6,
+            7,
+            8,
+            9
+        ],
+        "summer_consumption_share": 0.55
+    },
+    "pseg_fixed_monthly": 4.4,
     "srec_rate": 85,
     "gats_entry_url": "YOUR_GATS_GENERATION_ENTRY_URL",
     "net_cost": 16610,
     "annual_target_kwh": 13400,
-
     "email_from": "you@yourdomain.com",
     "email_to": "you@yourdomain.com",
     "email_password": "NOT_USED_KEPT_FOR_REFERENCE",
     "resend_api_key": "YOUR_RESEND_API_KEY",
-
-    "latitude": 40.0000,
-    "longitude": -74.0000
+    "latitude": 40.0,
+    "longitude": -74.0
 }

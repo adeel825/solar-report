@@ -272,7 +272,7 @@ def build_email(target_date: str) -> str:
             f'<div style="font-size:11px;color:#666;margin-top:2px">{net_label}{_delta(net, "net")}</div>'
         )
         net_card_value, net_card_color = f"{net_sign}{net:.1f} kWh", net_color
-        elec_sub_html = f"{min(produced, consumed):.2f} kWh × ${cfg['pseg_rate']:.3f}"
+        elec_sub_html = database.savings_basis_label(d, produced, consumed)
     else:
         warning_banner_html = (
             f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFF3E0;border:1px solid #FFCC80;'
@@ -286,7 +286,7 @@ def build_email(target_date: str) -> str:
         net_cell_border = "#ddd"
         net_cell_html = '<div style="font-size:14px;font-weight:600;color:#bbb">No data</div><div style="font-size:11px;color:#666;margin-top:2px">kWh net</div>'
         net_card_value, net_card_color = "No data", C_GREY
-        elec_sub_html = f"{produced:.2f} kWh (solar output) × ${cfg['pseg_rate']:.3f}"
+        elec_sub_html = database.savings_basis_label(d, produced, consumed)
 
     flow_row = (
         flow_cell(f"{produced:.1f}", f"kWh produced{_delta(produced, 'produced')}", C_GREEN) +

@@ -3,6 +3,8 @@ import sqlite3
 from pathlib import Path
 from datetime import date
 
+import rates
+
 DB_PATH = Path(__file__).parent / "solar.db"
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
@@ -15,13 +17,15 @@ CONSUMPTION_SANITY_CAP_KWH = 300
 # drifts from PSE&G's revenue-grade bidirectional meter over time (normal CT
 # calibration difference, plus PSE&G's net-metering banking window starting
 # slightly before Enphase's PTO_DATE cutoff) — by ~150 kWh over 4 months as of
-# Aug 2026. Re-anchor these two values whenever a new bill arrives: open the
-# bill's "Net Metering Program" table, take the latest row's meter-reading
-# date and "Cumulative kWh" figure, and set BANK_ANCHOR_DATE/BANK_ANCHOR_KWH
+# Aug 2026, and another ~50 kWh high over Aug 7 – Nov 5, 2026 (individual billing
+# periods within ~30–50 kWh; part of that is meter-read time vs Enphase's
+# midnight day boundary). Re-anchor these two values whenever a new bill
+# arrives: open the bill's "Net Metering Program" table, take the latest row's
+# meter-reading date and "Cumulative kWh" figure, and set BANK_ANCHOR_DATE/BANK_ANCHOR_KWH
 # to that date and its sign-flipped value (PSE&G's convention is IN - OUT;
 # this project's convention is produced - consumed = -(IN - OUT)).
-BANK_ANCHOR_DATE = "2026-08-07"   # PSE&G meter-reading date last calibrated against
-BANK_ANCHOR_KWH  = 1055.0         # PSE&G cumulative kWh as of BANK_ANCHOR_DATE, sign-flipped
+BANK_ANCHOR_DATE = "2026-11-05"   # PSE&G meter-reading date last calibrated against
+BANK_ANCHOR_KWH  = 1904.0         # PSE&G cumulative kWh as of BANK_ANCHOR_DATE, sign-flipped
 
 
 def is_consumption_anomalous(consumed: float | None) -> bool:
@@ -74,13 +78,75 @@ def init_db():
     conn.close()
 
 
+def _mtd_consumed_before(c, d: str) -> float:
+    """Calendar-month consumption before date d (anomalous days excluded) — drives the RS summer tier."""
+    month_start = d[:8] + "01"
+    row = c.execute(
+        "SELECT SUM(consumed) AS kwh FROM daily_readings WHERE date >= ? AND date < ? AND consumed <= ?",
+        (month_start, d, CONSUMPTION_SANITY_CAP_KWH),
+    ).fetchone()
+    return (row["kwh"] or 0.0) if row else 0.0
+
+
+def _bank_before(c, d: str) -> float:
+    """Net metering bank (kWh credit) at the start of date d, on the same basis as get_net_bank."""
+    if d > BANK_ANCHOR_DATE:
+        row = c.execute(
+            "SELECT SUM(net) AS kwh FROM daily_readings WHERE date > ? AND date < ? AND consumed <= ?",
+            (BANK_ANCHOR_DATE, d, CONSUMPTION_SANITY_CAP_KWH),
+        ).fetchone()
+        return BANK_ANCHOR_KWH + ((row["kwh"] or 0.0) if row else 0.0)
+    row = c.execute(
+        "SELECT SUM(net) AS kwh FROM daily_readings WHERE date < ? AND consumed <= ?",
+        (d, CONSUMPTION_SANITY_CAP_KWH),
+    ).fetchone()
+    return (row["kwh"] or 0.0) if row else 0.0
+
+
+def compute_electricity_savings(c, d: str, produced: float, consumed: float, net: float, cfg: dict) -> float:
+    """
+    What the day's electricity would have cost from PSE&G without solar, at RS
+    season/tier prices (see rates.py). Under net metering every kWh drawn from the
+    grid is paid for with banked export credit, so while the bank stays positive the
+    whole day's consumption is avoided cost — not just the part covered same-day.
+    Any draw the bank can't cover is billed and excluded. A glitched consumption
+    reading falls back to valuing the day's production.
+    """
+    if is_consumption_anomalous(consumed):
+        basis = produced
+    else:
+        bank_after = _bank_before(c, d) + net
+        uncovered = min(max(-bank_after, 0.0), max(-net, 0.0))
+        basis = consumed - uncovered
+    return round(rates.day_cost(basis, d, _mtd_consumed_before(c, d), cfg), 4)
+
+
+def savings_basis_label(d: str, produced: float, consumed: float) -> str:
+    """Report sub-line for a day's electricity savings: kWh valued and the RS price applied."""
+    cfg = load_config()
+    conn = get_conn()
+    mtd = _mtd_consumed_before(conn, d)
+    conn.close()
+    if is_consumption_anomalous(consumed):
+        return f"{produced:.2f} kWh (solar output) · {rates.rate_label(d, mtd, produced, cfg)}"
+    return f"{consumed:.2f} kWh used · {rates.rate_label(d, mtd, consumed, cfg)}"
+
+
+def marginal_rate_on(d: str) -> float:
+    """RS price of the next kWh on date d (used to value a day's net export credit)."""
+    cfg = load_config()
+    conn = get_conn()
+    mtd = _mtd_consumed_before(conn, d)
+    conn.close()
+    return rates.marginal_rate(d, mtd, cfg)
+
+
 def save_reading(reading: dict, target_date: str | None = None):
     """
     Saves a daily reading and updates cumulative counters.
     reading must contain: date, produced, consumed, imported, exported, net
     """
     cfg = load_config()
-    pseg_rate = cfg["pseg_rate"]
     srec_rate = cfg["srec_rate"]
 
     d = reading["date"]
@@ -92,14 +158,12 @@ def save_reading(reading: dict, target_date: str | None = None):
 
     self_consumed = round(produced - exported, 3)
     srec_earned = round((produced / 1000) * srec_rate, 4)
-    # Electricity savings = consumption covered by solar at retail rate.
-    # If produced >= consumed: whole bill is wiped out → save consumed × rate
-    # If produced <  consumed: solar covers produced kWh → save produced × rate
-    electricity_savings = round(min(produced, consumed) * pseg_rate, 4)
-    total_value = round(electricity_savings + srec_earned, 4)
 
     conn = get_conn()
     c = conn.cursor()
+
+    electricity_savings = compute_electricity_savings(c, d, produced, consumed, net, cfg)
+    total_value = round(electricity_savings + srec_earned, 4)
 
     # Grab the previously stored produced value for this date (0 if first time)
     existing = c.execute("SELECT produced FROM daily_readings WHERE date=?", (d,)).fetchone()

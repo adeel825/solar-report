@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import date, timedelta
 
 import database
+import rates
 import weather as _wx
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
@@ -206,7 +207,7 @@ def _break_even(cfg: dict, as_of_date: str) -> dict:
 
     net_cost     = cfg.get("net_cost", 16610)
     srec_rate    = cfg.get("srec_rate", 85.0)
-    pseg_rate    = cfg.get("pseg_rate", 0.276)
+    pseg_rate    = rates.blended_annual_rate(cfg, ANNUAL_KWH)  # usage-weighted RS price
     annual_prod  = cfg.get("annual_target_kwh", 13400)
 
     total_earned  = row["earned"] or 0.0
@@ -342,7 +343,7 @@ def _insights(row: dict, cum: dict, cfg: dict, monthly_target: int, consumption_
     if not consumption_ok:
         items.append(("#D85A30", f"⚠️ Consumption data unavailable today — Enphase reported an implausible reading ({row['consumed']:,.1f} kWh); likely a meter/communication glitch. Net import/export and bank figures are omitted until corrected."))
     elif net > 0:
-        items.append(("#1D9E75", f"{net:.2f} kWh net exported — ${net * cfg['pseg_rate']:.2f} in bill credits earned today"))
+        items.append(("#1D9E75", f"{net:.2f} kWh net exported — ${net * database.marginal_rate_on(row['date']):.2f} in bill credits earned today"))
     else:
         items.append(("#378ADD", f"Net draw of {abs(net):.2f} kWh from grid today — consumed more than exported"))
 
@@ -471,7 +472,7 @@ def build_report(target_date: str) -> Path:
         consumed_flow_html = f'<div class="fval" style="color:#D85A30">{consumed:.1f}</div><div class="flbl">kWh consumed{_delta_html(consumed, prev["consumed"] if prev and prev_consumption_ok else None, " kWh")}</div>'
         net_flow_html = f'<div class="fval" style="color:{"#1D9E75" if net >= 0 else "#D85A30"}">{"+" if net >= 0 else ""}{net:.1f}</div><div class="flbl">kWh {"net export" if net >= 0 else "net import"}{_delta_html(net, prev["net"] if prev and prev_consumption_ok else None, " kWh")}</div>'
         net_card_html = f'<div class="val" style="color:{"#1D9E75" if net >= 0 else "#D85A30"}">{"+" if net >= 0 else ""}{net:.1f}</div><div class="sub">kWh net today</div>'
-        elec_sub_html = f"{min(produced, consumed):.2f} kWh × ${cfg['pseg_rate']:.3f}"
+        elec_sub_html = database.savings_basis_label(d, produced, consumed)
     else:
         warning_banner_html = (
             f'<div style="background:#FFF3E0;border:1px solid #FFCC80;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#7A4A00;line-height:1.5">'
@@ -482,7 +483,7 @@ def build_report(target_date: str) -> Path:
         consumed_flow_html = '<div class="fval" style="color:#bbb;font-size:14px">No data</div><div class="flbl">kWh consumed</div>'
         net_flow_html = '<div class="fval" style="color:#bbb;font-size:14px">No data</div><div class="flbl">kWh net</div>'
         net_card_html = '<div class="val" style="color:#bbb;font-size:16px">No data</div><div class="sub">kWh net today</div>'
-        elec_sub_html = f"{produced:.2f} kWh (solar output) × ${cfg['pseg_rate']:.3f}"
+        elec_sub_html = database.savings_basis_label(d, produced, consumed)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
