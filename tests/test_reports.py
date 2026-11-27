@@ -104,6 +104,14 @@ class RenderTests(TempEnvTestCase):
         html = email_builder.build_email("2026-10-27")
         self.assertIn("(2d)", html)                  # Oct 25 and 26 only
 
+    def test_performance_bar_uses_practical_max(self):
+        html = email_builder.build_email("2026-11-10")
+        self.assertIn("Production vs practical max", html)
+        self.assertIn(" / 72 kWh", html)
+        page = report_builder.build_report("2026-11-10").read_text(encoding="utf-8")
+        self.assertIn(" / 72 kWh", page)
+        self.assertNotIn("theoretical", page)
+
     def test_glitched_consumption_shows_warning_in_both_daily_formats(self):
         self.assertIn("Consumption data unavailable", report_builder.build_report("2026-11-21").read_text(encoding="utf-8"))
         self.assertIn("Consumption data unavailable", email_builder.build_email("2026-11-21"))

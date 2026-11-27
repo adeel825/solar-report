@@ -15,7 +15,10 @@ REPORTS_DIR = ROOT / "reports"
 
 PTO_DATE = "2026-04-02"
 SYSTEM_CAPACITY_KW = 11.48  # kW DC nameplate (28 x 410 W); AC rating is 8.12 kW
-PEAK_SUN_HOURS = 8
+# Realistic clear-day production ceiling, kWh. Nameplate x sun-hours (11.48 x 8 = 92)
+# is unreachable: the 8.12 kW AC inverters clip at midday, and the best day on record
+# is 70.3 kWh (2026-05-12). Used for the "vs practical max" bar and forecast estimates.
+PRACTICAL_MAX_KWH = 72
 
 # Expected production by calendar month (installer estimate), kWh.
 MONTHLY_TARGETS = {
