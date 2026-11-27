@@ -17,7 +17,7 @@ Sent every morning at 5am covering the previous day.
 - **Energy flow** — produced vs. consumed with net export/import
 - **Change indicators** — every metric shows ▲/▼ vs. the previous day, colour-coded so "up" is always good (more consumption = red, more production = green)
 - **Key metrics** — net metering credit, month-to-date production, break-even timeline, lifetime production since PTO
-- **Financial value** — electricity savings at retail rate plus SREC income
+- **Financial value** — electricity savings (what the day's usage would have cost from PSE&G at Residential Service season/tier prices — while the net-metering bank has credit, all usage counts, not just the part covered same-day) plus SREC income
 - **System performance bars** — percentages are uncapped; once a target is beaten the bar fills the track and the amount past 100% shows as a darker overflow segment after a white 100% marker
   - Production vs. theoretical max
   - Month-to-date vs. monthly target
@@ -76,6 +76,7 @@ Run manually or scheduled around the 2nd Saturday of the month, separate from th
 solar_report.py          ← daily orchestrator (fetch → save → report → email)
 ├── enphase_api.py       ← Enphase Enlighten API v4 (OAuth2 + auto token refresh)
 ├── database.py          ← SQLite via sqlite3 (idempotent writes, cumulative counters)
+│   └── rates.py         ← PSE&G Residential Service season/tier pricing for savings
 ├── report_builder.py    ← full HTML report (CSS layout, performance meter, payoff table)
 ├── email_builder.py     ← email-safe HTML (table layout, inline styles, weather widget)
 └── send_email.py        ← Resend API delivery (send_raw() reused by GATS reminder)
@@ -112,9 +113,7 @@ cp config.example.json config.json
 | `api_key` | Enphase API key |
 | `system_id` | Your Enphase system ID |
 | `access_token` / `refresh_token` | OAuth2 tokens (auto-refreshed) |
-| `pseg_rate` | Combined delivery + supply rate ($/kWh) from your latest bill |
-| `pseg_delivery_rate` | Delivery component (for reference) |
-| `pseg_supply_rate` | Supply component — update quarterly as PSEG adjusts rates |
+| `pseg_rs_rates` | PSE&G Residential Service (RS) all-in $/kWh prices: `winter`, `summer_first_tier` (first 600 kWh/month), `summer_over_tier`, plus `tier_kwh`, `summer_months` (Jun–Sep) and `summer_consumption_share` (for break-even's blended rate). Each price = distribution + per-kWh riders + BGS + transmission from the rate sheet |
 | `pseg_fixed_monthly` | Fixed monthly service charge (solar doesn't eliminate this) |
 | `srec_rate` | SREC value in $/MWh (NJ: $85.00) — also used for GATS reminder $ estimates |
 | `gats_entry_url` | PJM-EIS GATS generation entry page, linked in the monthly GATS reminder email |
@@ -182,30 +181,39 @@ schtasks /create /tn "SolarGatsReminder" /tr "C:\dev\solar-report\run_gats_remin
 
 ---
 
+## Net Metering Bank Calibration
+
+Enphase's day-level net drifts from PSE&G's meter by a few dozen kWh per quarter, so the bank is anchored to the bill. When a new bill arrives:
+1. Open the bill's **Net Metering Program** table and take the latest row's meter-reading date and **Cumulative kWh**.
+2. Set `BANK_ANCHOR_DATE` / `BANK_ANCHOR_KWH` in `database.py` to that date and the sign-flipped value (PSE&G's −1,904 → `1904.0`).
+3. While you're there, compare each billing period's `OUT − IN` against `SUM(net)` in `daily_readings` for the same dates — a period that's off by much more than ~50 kWh usually means a missing day or a glitch reading.
+
+To repair a single past day, re-fetch it with `enphase_api.fetch_day("YYYY-MM-DD")` and pass it to `database.save_reading()` — but snapshot and restore the `monthly_kwh` / `monthly_reset_month` rows of `cumulative` around the call: `save_reading` resets the live monthly counter when it sees a date from a different month.
+
+Last calibrated against the Nov 5, 2026 bill (cumulative −1,904 kWh).
+
 ## Electricity Rate Updates
 
-Your PSEG supply rate changes quarterly. When a new bill arrives:
-1. Check the supply rate ($/kWh) on the bill
-2. Update `pseg_supply_rate` and `pseg_rate` (delivery + supply) in `config.json`
-3. Re-run historical dates to recalculate savings — or update the DB directly:
+You're on PSE&G **Residential Service (RS)** — not time-of-use — so price depends only on season (summer = June–September) and, in summer, whether you're past 600 kWh in the month. `rates.py` applies those prices; the numbers live in `pseg_rs_rates` in `config.json`.
+
+When PSE&G publishes new rates (the "Understanding Your PSE&G Bill" insert, or pseg.com/tariffs):
+1. For each of winter, summer 0–600 and summer over-600, add the RS **distribution** charge, every per-kWh rider (Conservation Incentive, Societal Benefits, Non-utility Generation, Solar Pilot, Green Programs, ZEC, Tax Adjustment Credit, COVID-19 — credits are negative), the **BGS** charge and the **transmission** charge.
+2. Update `pseg_rs_rates` (and its `effective` date) in `config.json`.
+3. Recompute savings for the affected rows:
 
 ```python
-import database, json
-from pathlib import Path
-
-NEW_RATE = 0.2586  # update this
-cfg = json.loads(Path("config.json").read_text(encoding="utf-8-sig"))
+import database
+cfg = database.load_config()
 conn = database.get_conn()
-rows = conn.execute("SELECT date, produced, consumed, srec_earned FROM daily_readings").fetchall()
-for r in rows:
-    kwh = min(r["produced"], r["consumed"])
-    elec_savings = round(kwh * NEW_RATE, 4)
-    total_value = round(elec_savings + r["srec_earned"], 4)
+for r in conn.execute("SELECT * FROM daily_readings WHERE date >= ?", ("2026-06-01",)).fetchall():
+    sav = database.compute_electricity_savings(conn, r["date"], r["produced"], r["consumed"], r["net"], cfg)
     conn.execute("UPDATE daily_readings SET electricity_savings=?, total_value=? WHERE date=?",
-                 (elec_savings, total_value, r["date"]))
+                 (sav, round(sav + r["srec_earned"], 4), r["date"]))
 conn.commit()
 conn.close()
 ```
+
+Calendar months stand in for billing months, so the 600 kWh summer tier boundary is approximate.
 
 ### Break-even model inputs
 
@@ -219,7 +227,7 @@ conn.close()
 
 SRECs are NJ-approved and included in `total_value` (`database.py`) and in the break-even projection (`report_builder.py`). `srec_rate` in `config.json` is $/MWh.
 
-If your SREC rate changes, update `srec_rate` in `config.json`, then backfill historical rows the same way as an electricity rate change above — recompute `srec_earned = (produced / 1000) * NEW_SREC_RATE` and `total_value = electricity_savings + srec_earned` for each row.
+If your SREC rate changes, update `srec_rate` in `config.json`, then recompute `srec_earned = (produced / 1000) * NEW_SREC_RATE` and `total_value = electricity_savings + srec_earned` for each row.
 
 ---
 
@@ -235,7 +243,7 @@ daily_readings (
     net                 REAL,   -- produced - consumed
     self_consumed       REAL,
     srec_earned         REAL,   -- daily SREC accrual
-    electricity_savings REAL,   -- min(produced,consumed) × pseg_rate
+    electricity_savings REAL,   -- usage valued at RS season/tier price (rates.py)
     total_value         REAL    -- electricity_savings + srec_earned
 )
 

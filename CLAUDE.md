@@ -18,13 +18,14 @@ report_builder.py    — full HTML daily report (CSS layout, performance meter)
 send_email.py        — Resend API delivery (send_raw() reused by daily report + GATS reminder)
 enphase_api.py       — Enphase Enlighten API v4 (OAuth2, auto token refresh)
 database.py          — SQLite via sqlite3 (idempotent writes, cumulative counters)
+rates.py             — PSE&G RS season/tier pricing (savings + break-even blended rate)
 weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am–2pm)
 ```
 
 ## Key Design Decisions
 
 - **Import/export**: Uses `net = produced - consumed` only. No rgm_stats (it measured inverter output, not grid export).
-- **Electricity savings**: `min(produced, consumed) × pseg_rate`.
+- **Electricity savings**: what the day's consumption would have cost from PSE&G at Residential Service (RS) prices — `rates.py`, prices in `pseg_rs_rates`. RS is not time-of-use: price varies only by season (summer Jun–Sep) and the summer 600 kWh/month tier (calendar month as a proxy). Because every bill shows 0 kWh billed (net metering), all consumption is avoided cost while the bank is positive; only a draw the bank can't cover is excluded (`database.compute_electricity_savings`). Break-even uses `rates.blended_annual_rate` (~$0.271).
 - **SRECs**: NJ-approved as of 2026-09-13, rate $85/MWh. Included in `total_value` (`database.py`) and in break-even projections (`report_builder.py`). Historical `daily_readings` rows were backfilled from PTO at the approved rate. Live "SREC income" card in all reports.
 - **Lifetime production**: `database.get_lifetime_production(PTO_DATE)` — `SUM(produced)` since PTO. Displayed as its own card in all four report surfaces (daily HTML, daily email, weekly, monthly) alongside the SREC card.
 - **Weather**: Uses hourly WMO codes during **peak solar hours only (9am–2pm)** to avoid overnight conditions skewing the description.
@@ -38,8 +39,7 @@ weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am
 
 | Key | Notes |
 |---|---|
-| `pseg_rate` | Combined delivery + supply rate (update quarterly) |
-| `pseg_supply_rate` | Supply component — changes quarterly |
+| `pseg_rs_rates` | RS all-in $/kWh: `winter`, `summer_first_tier`, `summer_over_tier`, `tier_kwh`, `summer_months`, `summer_consumption_share`. From the June 1, 2026 rate sheet (Jul 15 transmission change not yet reflected); update when PSE&G publishes new rates |
 | `srec_rate` | SREC value in $/MWh (also used for GATS certificate $ estimates) |
 | `gats_entry_url` | PJM-EIS GATS generation entry page — linked in the monthly GATS reminder email |
 | `net_cost` | Net system cost after incentives |

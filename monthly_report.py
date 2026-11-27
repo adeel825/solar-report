@@ -243,7 +243,7 @@ def build_monthly_report(year: int | None = None, month: int | None = None) -> t
   <table width="100%" cellpadding="0" cellspacing="0" border="0"
     style="background:#f8f8f8;border-radius:10px;margin-bottom:4px">
     {_stat_row("Electricity savings", f"${elec_sav:.2f}", d_elec,
-               f"{min(produced, consumed):.1f} kWh covered × ${cfg['pseg_rate']:.3f}")}
+               f"{consumed:.1f} kWh used × ${(elec_sav / consumed) if consumed else 0:.3f} avg RS price")}
     {_stat_row("SREC income", f"${srec_earned:.2f}", d_srec,
                f"{produced/1000:.3f} MWh × ${cfg['srec_rate']:.2f}")}
     {_stat_row("Total value", f"${total_val:.2f}", d_total)}
