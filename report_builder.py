@@ -1,41 +1,14 @@
-import calendar
-import json
-import math
-from pathlib import Path
 from datetime import date, timedelta
+from pathlib import Path
 
+import common
 import database
 import rates
 import weather as _wx
-
-CONFIG_PATH = Path(__file__).parent / "config.json"
-REPORTS_DIR = Path(__file__).parent / "reports"
-
-MONTHLY_TARGETS = {
-    1: 800, 2: 870, 3: 1100, 4: 1260, 5: 1430,
-    6: 1420, 7: 1490, 8: 1430, 9: 1180, 10: 1050,
-    11: 800, 12: 700,
-}
-SYSTEM_CAPACITY_KW = 11.48  # kW DC nameplate (28 x 410 W); AC rating is 8.12 kW
-PEAK_SUN_HOURS = 8
-PTO_DATE = "2026-04-02"
-
-
-def load_config():
-    with open(CONFIG_PATH, encoding="utf-8-sig") as f:
-        return json.load(f)
-
-
-def _fmt_date(d: str) -> str:
-    dt = date.fromisoformat(d)
-    return dt.strftime("%B") + " " + str(dt.day) + ", " + str(dt.year)
-
-
-def _pct(val, total) -> float:
-    """Percent of total, uncapped — over-target values report their true figure (e.g. 118.0)."""
-    if not total:
-        return 0.0
-    return round(val / total * 100, 1)
+from common import (
+    PEAK_SUN_HOURS, PTO_DATE, REPORTS_DIR, SYSTEM_CAPACITY_KW,
+    SPRING_DRAW, SUMMER_DRAW, WINTER_DRAW,
+)
 
 
 def _darken(hex_color: str, factor: float = 0.6) -> str:
@@ -73,7 +46,7 @@ def _bar_html(pct: float, color: str) -> str:
 
 
 # Performance meter zones, as multiples of the daily target
-METER_ZONES = (0.45, 0.70, 0.90)   # Poor | Fair | Good | Excellent
+METER_ZONES = common.RATING_THRESHOLDS   # Poor | Fair | Good | Excellent
 METER_HEADROOM = 1.35               # default scale: 0 → 1.35 × daily target
 
 
@@ -93,91 +66,85 @@ def _meter_scale(produced: float, daily_target: float) -> dict:
     }
 
 
-def _pto_duration(target_date: str) -> str:
-    """Human-readable time since PTO: days → weeks → months → years."""
-    pto = date.fromisoformat(PTO_DATE)
-    target = date.fromisoformat(target_date)
-    delta = (target - pto).days
-
-    if delta < 0:
-        return "pre-PTO"
-    if delta == 0:
-        return "PTO day"
-    if delta < 14:
-        return f"{delta} day{'s' if delta != 1 else ''} since PTO"
-    if delta < 60:
-        weeks = delta // 7
-        days = delta % 7
-        tail = f" {days}d" if days else ""
-        return f"{weeks}w{tail} since PTO"
-    if delta < 365:
-        months = delta // 30
-        weeks = (delta % 30) // 7
-        tail = f" {weeks}w" if weeks else ""
-        return f"{months}mo{tail} since PTO"
-    years = delta // 365
-    months = (delta % 365) // 30
-    tail = f" {months}mo" if months else ""
-    return f"{years}yr{tail} since PTO"
-
-
-def _perf_meter(target_date: str, produced: float, monthly_target: int) -> dict:
-    """
-    Compute performance meter data by comparing today's production to:
-    - all other days in the DB (historical average / best)
-    - the expected daily output for this month
-    """
+def history_stats(target_date: str) -> dict:
+    """Average / best / count of daily production before target_date."""
     conn = database.get_conn()
-    rows = conn.execute(
-        "SELECT produced FROM daily_readings WHERE date != ? ORDER BY produced",
-        (target_date,),
-    ).fetchall()
+    row = conn.execute(
+        "SELECT AVG(produced) AS avg, MAX(produced) AS best, COUNT(*) AS cnt "
+        "FROM daily_readings WHERE date < ?", (target_date,)
+    ).fetchone()
     conn.close()
+    if not row or not row["cnt"]:
+        return {"avg": None, "best": None, "count": 0}
+    return {"avg": row["avg"], "best": row["best"], "count": row["cnt"]}
 
-    hist = [r["produced"] for r in rows]
-    hist_avg = sum(hist) / len(hist) if hist else None
-    hist_best = max(hist) if hist else None
-    hist_count = len(hist)
 
-    # Expected daily output for this month
-    days_in_month = 30  # close enough for all months
-    daily_target = monthly_target / days_in_month
+def production_rank(produced: float, target_date: str) -> tuple[int, int]:
+    """(rank, total) of a day's production among all days up to target_date; (0, 0) if none."""
+    conn = database.get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) AS total, SUM(CASE WHEN produced > ? THEN 1 ELSE 0 END) AS above "
+        "FROM daily_readings WHERE date <= ?",
+        (produced, target_date),
+    ).fetchone()
+    conn.close()
+    if not row or not row["total"]:
+        return 0, 0
+    return (row["above"] or 0) + 1, row["total"]
 
-    # Rating vs daily target
+
+def bank_coverage() -> dict:
+    """Net metering bank since PTO, plus how many days of typical draw it covers by season."""
+    bank = database.get_net_bank(PTO_DATE)
+    kwh = bank["banked_kwh"]
+    days = lambda draw: round(kwh / draw) if kwh > 0 else 0
+    return {
+        "banked_kwh": kwh,
+        "excluded": bank["anomalous_days"],
+        "winter_days": days(WINTER_DRAW),
+        "spring_days": days(SPRING_DRAW),
+        "summer_days": days(SUMMER_DRAW),
+    }
+
+
+def weather_context(target_date: str, cfg: dict) -> tuple[dict | None, dict | None]:
+    """(that day's weather, next day's forecast), or Nones when no location is configured."""
+    lat, lon = cfg.get("latitude"), cfg.get("longitude")
+    if not (lat and lon):
+        return None, None
+    return _wx.fetch_day_weather(target_date, lat, lon), _wx.fetch_tomorrow_forecast(lat, lon, target_date)
+
+
+def _perf_meter(target_date: str, produced: float, daily_target: float) -> dict:
+    """
+    Performance meter data: today's production against the daily target, with
+    the historical average (days before target_date) as a tick mark.
+    """
+    hist = history_stats(target_date)
     ratio = produced / daily_target if daily_target else 0
-    if ratio >= 0.90:
-        rating, rating_color = "EXCELLENT", "#1D9E75"
-    elif ratio >= 0.70:
-        rating, rating_color = "GOOD", "#5BAD6F"
-    elif ratio >= 0.45:
-        rating, rating_color = "FAIR", "#EF9F27"
-    else:
-        rating, rating_color = "POOR", "#D85A30"
+    rating, rating_color, _ = common.rating(ratio)
 
     # Gauge scale: 0 → daily_target × 1.35, stretched on days beyond that
     meter = _meter_scale(produced, daily_target)
     scale_max = meter["scale_max"]
-    needle_pct = meter["needle_pct"]
-    avg_pct = min(hist_avg / scale_max * 100, 100) if hist_avg and scale_max else None
-    z_poor, z_fair, z_good = meter["z_poor"], meter["z_fair"], meter["z_good"]
+    avg_pct = min(hist["avg"] / scale_max * 100, 100) if hist["avg"] and scale_max else None
 
     sub_parts = [f"Today {produced:.1f} kWh"]
-    if hist_avg is not None:
-        sub_parts.append(f"Avg {hist_avg:.1f} kWh ({hist_count}d)")
-    if hist_best is not None:
-        sub_parts.append(f"Best {hist_best:.1f} kWh")
+    if hist["count"]:
+        sub_parts.append(f"Avg {hist['avg']:.1f} kWh ({hist['count']}d)")
+        sub_parts.append(f"Best {hist['best']:.1f} kWh")
     sub_parts.append(f"Monthly daily target {daily_target:.0f} kWh")
 
     return {
         "rating": rating,
         "rating_color": rating_color,
-        "needle_pct": round(needle_pct, 1),
+        "needle_pct": meter["needle_pct"],
         "avg_pct": round(avg_pct, 1) if avg_pct is not None else None,
-        "z_poor": z_poor,
-        "z_fair": z_fair,
-        "z_good": z_good,
+        "z_poor": meter["z_poor"],
+        "z_fair": meter["z_fair"],
+        "z_good": meter["z_good"],
         "sub": " · ".join(sub_parts),
-        "hist_count": hist_count,
+        "hist_count": hist["count"],
     }
 
 
@@ -212,7 +179,7 @@ def _break_even(cfg: dict, as_of_date: str) -> dict:
 
     total_earned  = row["earned"] or 0.0
     remaining     = max(net_cost - total_earned, 0)
-    pct_paid      = _pct(total_earned, net_cost)
+    pct_paid      = common.pct(total_earned, net_cost)
 
     if remaining <= 0:
         return {
@@ -306,10 +273,12 @@ def _break_even(cfg: dict, as_of_date: str) -> dict:
     }
 
 
-def _delta_html(current: float, previous: float | None, unit: str = "", fmt: str = ".1f") -> str:
+def _delta_html(current: float, previous: float | None, unit: str = "", fmt: str = ".1f",
+                invert: bool = False) -> str:
     """
     Returns a small inline HTML change badge comparing current to previous.
-    Green arrow up for improvement, red for decline, grey dash for no data.
+    Green for improvement, red for decline, grey dash for no data. invert=True
+    for metrics where an increase is bad (consumption, grid imports).
     """
     if previous is None or previous == 0:
         return '<span style="font-size:10px;color:#bbb;margin-left:4px">—</span>'
@@ -318,7 +287,8 @@ def _delta_html(current: float, previous: float | None, unit: str = "", fmt: str
     if abs(diff) < 0.01:
         return '<span style="font-size:10px;color:#bbb;margin-left:4px">—</span>'
     arrow = "▲" if diff > 0 else "▼"
-    color = "#1D9E75" if diff > 0 else "#D85A30"
+    good  = diff < 0 if invert else diff > 0
+    color = "#1D9E75" if good else "#D85A30"
     val   = format(abs(diff), fmt)
     return (
         f'<span style="font-size:10px;color:{color};margin-left:6px;white-space:nowrap">'
@@ -326,13 +296,12 @@ def _delta_html(current: float, previous: float | None, unit: str = "", fmt: str
     )
 
 
-def _insights(row: dict, cum: dict, cfg: dict, monthly_target: int, consumption_ok: bool = True) -> list[tuple[str, str]]:
+def _insights(row: dict, monthly_kwh: float, cfg: dict, monthly_target: int, consumption_ok: bool = True) -> list[tuple[str, str]]:
     items = []
     produced = row["produced"]
     net = row["net"]
-    monthly_kwh = cum["monthly_kwh"]
 
-    perf_pct = _pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
+    perf_pct = common.pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
     if perf_pct >= 80:
         items.append(("#1D9E75", f"Excellent output — {produced:.1f} kWh is {perf_pct:.0f}% of theoretical max ({SYSTEM_CAPACITY_KW} kW × {PEAK_SUN_HOURS} hrs)"))
     elif perf_pct >= 50:
@@ -343,11 +312,11 @@ def _insights(row: dict, cum: dict, cfg: dict, monthly_target: int, consumption_
     if not consumption_ok:
         items.append(("#D85A30", f"⚠️ Consumption data unavailable today — Enphase reported an implausible reading ({row['consumed']:,.1f} kWh); likely a meter/communication glitch. Net import/export and bank figures are omitted until corrected."))
     elif net > 0:
-        items.append(("#1D9E75", f"{net:.2f} kWh net exported — ${net * database.marginal_rate_on(row['date']):.2f} in bill credits earned today"))
+        items.append(("#1D9E75", f"{net:.2f} kWh net exported — ${net * database.marginal_rate_on(row['date'], cfg):.2f} in bill credits earned today"))
     else:
         items.append(("#378ADD", f"Net draw of {abs(net):.2f} kWh from grid today — consumed more than exported"))
 
-    mtd_pct = _pct(monthly_kwh, monthly_target)
+    mtd_pct = common.pct(monthly_kwh, monthly_target)
     month_name = date.fromisoformat(row["date"]).strftime("%B")
     items.append(("#378ADD", f"Month-to-date: {monthly_kwh:.1f} kWh ({mtd_pct:.1f}% of {monthly_target:,} kWh {month_name} target)"))
 
@@ -374,88 +343,53 @@ def _yby_rows(year_by_year: list, net_cost: float) -> str:
 
 
 def build_report(target_date: str) -> Path:
-    cfg = load_config()
+    cfg = common.load_config()
     row = database.get_reading(target_date)
     if row is None:
         raise ValueError(f"No reading found for {target_date}")
-    cum = database.get_cumulative()
 
     REPORTS_DIR.mkdir(exist_ok=True)
 
     d = row["date"]
     produced  = row["produced"]
     consumed  = row["consumed"]
-    imported  = row["imported"]
-    exported  = row["exported"]
     net       = row["net"]
     electricity_savings = row["electricity_savings"]
-    self_consumed       = row["self_consumed"]
     total_value         = row["total_value"]
-
-    monthly_kwh  = cum["monthly_kwh"]
+    srec_earned         = row["srec_earned"]
 
     report_dt      = date.fromisoformat(d)
-    month          = report_dt.month
-    pto            = date.fromisoformat(PTO_DATE)
-    days_in_month  = calendar.monthrange(report_dt.year, month)[1]
-    if report_dt.year == pto.year and month == pto.month:
-        operating_days = days_in_month - (pto.day - 1)
-        monthly_target = round(MONTHLY_TARGETS[month] * operating_days / days_in_month)
-    else:
-        monthly_target = MONTHLY_TARGETS[month]
-    month_name = report_dt.strftime("%B")
+    monthly_target = common.monthly_target(report_dt.year, report_dt.month)
+    daily_target   = common.daily_target(report_dt.year, report_dt.month)
+    monthly_kwh    = database.get_month_to_date(d)
+    month_name     = report_dt.strftime("%B")
 
     # Previous day for change indicators
-    prev_date = (date.fromisoformat(d) - timedelta(days=1)).isoformat()
-    prev = database.get_reading(prev_date)
+    prev = database.get_reading((report_dt - timedelta(days=1)).isoformat())
 
     # Consumption sanity check — a meter/comm glitch can dump a fabricated
     # reading into a single day. Treat it as missing data rather than display it.
     consumption_ok = not database.is_consumption_anomalous(consumed)
     prev_consumption_ok = prev is not None and not database.is_consumption_anomalous(prev["consumed"])
 
-    # Weather and tomorrow forecast for headline sentence
-    _lat = cfg.get("latitude")
-    _lon = cfg.get("longitude")
-    weather_data  = _wx.fetch_day_weather(d, _lat, _lon) if (_lat and _lon) else None
-    forecast_data = _wx.fetch_tomorrow_forecast(_lat, _lon, d) if (_lat and _lon) else None
-
-    # Rank for headline (top X% / new record / lowest day yet)
-    _rc = database.get_conn()
-    _rr = _rc.execute(
-        "SELECT COUNT(*) as total, SUM(CASE WHEN produced > ? THEN 1 ELSE 0 END) as above "
-        "FROM daily_readings WHERE date <= ?",
-        (produced, d),
-    ).fetchone()
-    _rc.close()
-    rank_total = _rr["total"] if _rr and _rr["total"] else 0
-    rank       = ((_rr["above"] or 0) + 1) if rank_total else 0
-
-    daily_target = monthly_target / 30
+    weather_data, forecast_data = weather_context(d, cfg)
+    rank, rank_total = production_rank(produced, d)
     headline = _wx.build_headline_daily(produced, prev, weather_data, forecast_data, daily_target, rank, rank_total)
 
-    pto_label   = _pto_duration(d)
-    date_display = _fmt_date(d)
-    perf        = _perf_meter(d, produced, monthly_target)
-    be          = _break_even(cfg, d)
+    pto_label    = common.pto_duration(d)
+    date_display = common.fmt_date(d)
+    perf         = _perf_meter(d, produced, daily_target)
+    be           = _break_even(cfg, d)
 
-    mtd_pct       = _pct(monthly_kwh, monthly_target)
-    perf_pct      = _pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
+    mtd_pct  = common.pct(monthly_kwh, monthly_target)
+    perf_pct = common.pct(produced, SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS)
 
-    # Net metering bank since PTO — seasonal day-coverage
-    WINTER_DRAW = 19.0   # kWh/day — PSE&G bill Jan–Feb average
-    SPRING_DRAW = 22.7   # kWh/day — PSE&G bill Mar–May average
-    SUMMER_DRAW = 52.0   # kWh/day — PSE&G bill Jun–Aug peak
-    bank = database.get_net_bank(PTO_DATE)
-    banked_kwh       = bank["banked_kwh"]
-    bank_excluded    = bank["anomalous_days"]
+    bank = bank_coverage()
+    banked_kwh, bank_excluded = bank["banked_kwh"], bank["excluded"]
+    winter_days, spring_days, summer_days = bank["winter_days"], bank["spring_days"], bank["summer_days"]
     lifetime_produced = database.get_lifetime_production(PTO_DATE)
-    srec_earned       = row["srec_earned"]
-    winter_days = round(banked_kwh / WINTER_DRAW) if banked_kwh > 0 else 0
-    spring_days = round(banked_kwh / SPRING_DRAW) if banked_kwh > 0 else 0
-    summer_days = round(banked_kwh / SUMMER_DRAW) if banked_kwh > 0 else 0
 
-    insights = _insights(row, cum, cfg, monthly_target, consumption_ok)
+    insights = _insights(row, monthly_kwh, cfg, monthly_target, consumption_ok)
     insight_rows = "\n".join(
         f'    <div class="insight-row"><div class="dot" style="background:{color}"></div><div>{text}</div></div>'
         for color, text in insights
@@ -467,12 +401,12 @@ def build_report(target_date: str) -> Path:
         avg_tick_html = f'<div style="position:absolute;left:{perf["avg_pct"]}%;top:-3px;bottom:-3px;width:2px;background:rgba(0,0,0,0.25);transform:translateX(-50%);border-radius:1px" title="Historical avg"></div>'
 
     # Consumption anomaly handling — never display a fabricated reading.
+    elec_sub_html = database.savings_basis_label(d, produced, consumed, cfg)
     warning_banner_html = ""
     if consumption_ok:
-        consumed_flow_html = f'<div class="fval" style="color:#D85A30">{consumed:.1f}</div><div class="flbl">kWh consumed{_delta_html(consumed, prev["consumed"] if prev and prev_consumption_ok else None, " kWh")}</div>'
-        net_flow_html = f'<div class="fval" style="color:{"#1D9E75" if net >= 0 else "#D85A30"}">{"+" if net >= 0 else ""}{net:.1f}</div><div class="flbl">kWh {"net export" if net >= 0 else "net import"}{_delta_html(net, prev["net"] if prev and prev_consumption_ok else None, " kWh")}</div>'
+        consumed_flow_html = f'<div class="fval" style="color:#D85A30">{consumed:.1f}</div><div class="flbl">kWh consumed{_delta_html(consumed, prev["consumed"] if prev_consumption_ok else None, " kWh", invert=True)}</div>'
+        net_flow_html = f'<div class="fval" style="color:{"#1D9E75" if net >= 0 else "#D85A30"}">{"+" if net >= 0 else ""}{net:.1f}</div><div class="flbl">kWh {"net export" if net >= 0 else "net import"}{_delta_html(net, prev["net"] if prev_consumption_ok else None, " kWh")}</div>'
         net_card_html = f'<div class="val" style="color:{"#1D9E75" if net >= 0 else "#D85A30"}">{"+" if net >= 0 else ""}{net:.1f}</div><div class="sub">kWh net today</div>'
-        elec_sub_html = database.savings_basis_label(d, produced, consumed)
     else:
         warning_banner_html = (
             f'<div style="background:#FFF3E0;border:1px solid #FFCC80;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#7A4A00;line-height:1.5">'
@@ -483,7 +417,6 @@ def build_report(target_date: str) -> Path:
         consumed_flow_html = '<div class="fval" style="color:#bbb;font-size:14px">No data</div><div class="flbl">kWh consumed</div>'
         net_flow_html = '<div class="fval" style="color:#bbb;font-size:14px">No data</div><div class="flbl">kWh net</div>'
         net_card_html = '<div class="val" style="color:#bbb;font-size:16px">No data</div><div class="sub">kWh net today</div>'
-        elec_sub_html = database.savings_basis_label(d, produced, consumed)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -606,7 +539,7 @@ def build_report(target_date: str) -> Path:
     <div class="card">
       <div class="lbl">Lifetime production</div>
       <div class="val" style="color:#1D9E75">{lifetime_produced:,.0f}</div>
-      <div class="sub">kWh since PTO ({_fmt_date(PTO_DATE)})</div>
+      <div class="sub">kWh since PTO ({common.fmt_date(PTO_DATE)})</div>
     </div>
   </div>
 

@@ -20,18 +20,14 @@ Enphase's month-end history, so re-running for a month always gives the same
 email and nothing is stored between runs.
 """
 import calendar
-import json
 import sys
 from datetime import date, timedelta
-from pathlib import Path
 
 import enphase_api
 import send_email
-from report_builder import PTO_DATE
+from common import PTO_DATE, load_config
 
 HISTORY_MONTHS = 6
-
-CONFIG_PATH = Path(__file__).parent / "config.json"
 
 # GATS issues 1 certificate per whole MWh of production ABOVE the generator's
 # initial meter reading, carrying fractional remainders forward automatically.
@@ -43,11 +39,6 @@ GATS_BASELINE_KWH = 2990
 
 # Sanity bounds for fetched readings (see README "GATS Monthly Reminder").
 MAX_PLAUSIBLE_MONTHLY_JUMP_KWH = 3000
-
-
-def load_config():
-    with open(CONFIG_PATH, encoding="utf-8-sig") as f:
-        return json.load(f)
 
 
 class GatsReadingError(Exception):

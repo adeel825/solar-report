@@ -2,16 +2,15 @@ import json
 import base64
 import requests
 from datetime import date, timedelta
-from pathlib import Path
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
+from common import CONFIG_PATH, load_config
+
 BASE_URL = "https://api.enphaseenergy.com/api/v4/systems"
 TOKEN_URL = "https://api.enphaseenergy.com/oauth/token"
 
 
-def load_config():
-    with open(CONFIG_PATH, encoding="utf-8-sig") as f:
-        return json.load(f)
+class MissingDataError(Exception):
+    """Enphase has not (yet) published data for the requested day."""
 
 
 def save_config(cfg):
@@ -89,6 +88,10 @@ def fetch_day(target_date: str | None = None) -> dict:
     data, cfg = api_get(f"{base}/consumption_lifetime", {}, cfg)
     consumed_wh = _extract_lifetime_value(data, target_date, "consumption")
 
+    if produced_wh == 0 and consumed_wh == 0:
+        # A house never uses 0 Wh in a day — both zero means the day isn't processed yet.
+        raise MissingDataError(f"Enphase reports 0 Wh produced and consumed for {target_date}; data not published yet")
+
     # --- Derived values ---
     produced = round(produced_wh / 1000, 3)
     consumed = round(consumed_wh / 1000, 3)
@@ -128,18 +131,19 @@ def _extract_lifetime_value(data: dict, target_date: str, key: str) -> float:
     """
     energy_lifetime / consumption_lifetime returns:
       {"start_date": "YYYY-MM-DD", "production": [wh, ...], ...}
-    Finds the index corresponding to target_date.
+    Finds the index corresponding to target_date. Raises MissingDataError when
+    the array doesn't reach that date — usually because Enphase hasn't finished
+    processing it — rather than letting a 0 kWh day be saved silently.
     """
     start = data.get("start_date")
     values = data.get(key, [])
     if not start or not values:
-        return 0.0
-    start_d = date.fromisoformat(start)
-    target_d = date.fromisoformat(target_date)
-    idx = (target_d - start_d).days
-    if 0 <= idx < len(values):
-        return float(values[idx])
-    return 0.0
+        raise MissingDataError(f"Enphase returned no {key} data")
+    idx = (date.fromisoformat(target_date) - date.fromisoformat(start)).days
+    if not 0 <= idx < len(values) or values[idx] is None:
+        last = date.fromisoformat(start) + timedelta(days=len(values) - 1)
+        raise MissingDataError(f"Enphase {key} data for {target_date} not available (latest day: {last})")
+    return float(values[idx])
 
 
 

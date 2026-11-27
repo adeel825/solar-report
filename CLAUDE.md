@@ -9,15 +9,17 @@ stores it in SQLite, generates HTML reports, and sends email digests via Resend.
 ## Architecture
 
 ```
-solar_report.py      — daily orchestrator (fetch → save → report → email)
+solar_report.py      — daily orchestrator (fetch → save → report → email); emails a failure alert and exits 1 on error
 weekly_report.py     — weekly summary report + email (runs every Monday 6am)
 monthly_report.py    — monthly summary report + email (runs 1st of month 6:30am)
 gats_reminder.py     — monthly PJM-EIS GATS meter-reading reminder (runs 2nd Saturday, user-scheduled)
 email_builder.py     — email-safe HTML for daily report (table layout, inline styles)
 report_builder.py    — full HTML daily report (CSS layout, performance meter)
-send_email.py        — Resend API delivery (send_raw() reused by daily report + GATS reminder)
-enphase_api.py       — Enphase Enlighten API v4 (OAuth2, auto token refresh)
-database.py          — SQLite via sqlite3 (idempotent writes, cumulative counters)
+send_email.py        — Resend API delivery (send_raw() used by every report; send_failure_alert() for failed jobs)
+enphase_api.py       — Enphase Enlighten API v4 (OAuth2, auto token refresh; MissingDataError for unpublished days)
+database.py          — SQLite via sqlite3 (idempotent writes; MTD/lifetime are SUM queries; recompute_savings())
+common.py            — shared constants/helpers: load_config, PTO_DATE, system size, MONTHLY_TARGETS, monthly_target(), rating()
+tests/               — unittest suite: `python -m unittest discover -s tests -t .` (temp DB/config, no network)
 rates.py             — PSE&G RS season/tier pricing (savings + break-even blended rate)
 weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am–2pm)
 ```
@@ -54,15 +56,17 @@ weather.py           — Open-Meteo weather/forecast fetch (peak solar hours 9am
 ```sql
 daily_readings (date PK, produced, consumed, imported, exported, net,
                 self_consumed, srec_earned, electricity_savings, total_value)
-cumulative     (key PK, value — keys: lifetime_kwh, monthly_kwh,
-                monthly_reset_month)
 ```
+Month-to-date and lifetime production are `SUM(produced)` queries (`database.get_month_to_date`,
+`get_lifetime_production`). The legacy `cumulative` counter table is unused. Saving a past day
+recomputes every later day's savings; after a rate or SREC change run `database.recompute_savings(from_date)`.
 
 ## SDLC Workflow
 
 - `main` = production (what the scheduled tasks run). Never commit directly.
 - Feature branches: `feature/<name>`, fix branches: `fix/<name>`
 - Every PR must include updated README and screenshots (`docs/screenshot-*.png`)
+- Run `python -m unittest discover -s tests -t .` before every PR; add tests for new logic
 - Merge via GitHub PR (squash merge). Clean up branch after merge.
 - GitHub remote: `https://github.com/adeel825/solar-report.git`
 - GitHub MCP server is configured at user scope — use it for branch/PR/merge operations.
@@ -98,7 +102,7 @@ python gats_reminder.py 2026-09
 
 ## PTO Date
 
-April 2, 2026. Set in `report_builder.py` and `email_builder.py` as `PTO_DATE = "2026-04-02"`.
+April 2, 2026. Set once in `common.py` as `PTO_DATE = "2026-04-02"`.
 All period calculations are clamped to this date. `gats_reminder.py` imports `PTO_DATE`
 only to start its history table's first month at the day before PTO; the reading itself is
 unadjusted (see "GATS reading" above).

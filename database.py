@@ -1,12 +1,10 @@
-import json
 import sqlite3
-from pathlib import Path
-from datetime import date
+from datetime import date, timedelta
 
 import rates
+from common import ROOT, load_config
 
-DB_PATH = Path(__file__).parent / "solar.db"
-CONFIG_PATH = Path(__file__).parent / "config.json"
+DB_PATH = ROOT / "solar.db"
 
 # Consumption readings above this are treated as missing/bad data rather than
 # real usage — Enphase meter/comm glitches occasionally dump a garbage pulse
@@ -32,11 +30,6 @@ def is_consumption_anomalous(consumed: float | None) -> bool:
     return consumed is not None and consumed > CONSUMPTION_SANITY_CAP_KWH
 
 
-def load_config():
-    with open(CONFIG_PATH, encoding="utf-8-sig") as f:
-        return json.load(f)
-
-
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -60,20 +53,8 @@ def init_db():
             total_value   REAL
         )
     """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS cumulative (
-            key   TEXT PRIMARY KEY,
-            value REAL
-        )
-    """)
-    # Seed cumulative rows if missing
-    seeds = [
-        ("lifetime_kwh", 0),
-        ("monthly_kwh", 0),
-        ("monthly_reset_month", 0),
-    ]
-    for key, val in seeds:
-        c.execute("INSERT OR IGNORE INTO cumulative (key, value) VALUES (?, ?)", (key, val))
+    # Month-to-date and lifetime totals are SUMs over daily_readings; the old
+    # running-counter table ("cumulative") is no longer read or written.
     conn.commit()
     conn.close()
 
@@ -121,9 +102,9 @@ def compute_electricity_savings(c, d: str, produced: float, consumed: float, net
     return round(rates.day_cost(basis, d, _mtd_consumed_before(c, d), cfg), 4)
 
 
-def savings_basis_label(d: str, produced: float, consumed: float) -> str:
+def savings_basis_label(d: str, produced: float, consumed: float, cfg: dict | None = None) -> str:
     """Report sub-line for a day's electricity savings: kWh valued and the RS price applied."""
-    cfg = load_config()
+    cfg = cfg or load_config()
     conn = get_conn()
     mtd = _mtd_consumed_before(conn, d)
     conn.close()
@@ -132,83 +113,86 @@ def savings_basis_label(d: str, produced: float, consumed: float) -> str:
     return f"{consumed:.2f} kWh used · {rates.rate_label(d, mtd, consumed, cfg)}"
 
 
-def marginal_rate_on(d: str) -> float:
+def marginal_rate_on(d: str, cfg: dict | None = None) -> float:
     """RS price of the next kWh on date d (used to value a day's net export credit)."""
-    cfg = load_config()
+    cfg = cfg or load_config()
     conn = get_conn()
     mtd = _mtd_consumed_before(conn, d)
     conn.close()
     return rates.marginal_rate(d, mtd, cfg)
 
 
-def save_reading(reading: dict, target_date: str | None = None):
+def save_reading(reading: dict) -> dict:
     """
-    Saves a daily reading and updates cumulative counters.
-    reading must contain: date, produced, consumed, imported, exported, net
+    Saves (or replaces) one day's reading with its derived values.
+    reading must contain: date, produced, consumed, imported, exported, net.
+
+    A day's savings depend on the bank and the month's usage before it, so
+    saving a day that already has later days stored (a backfill or repair)
+    recomputes those later days too.
     """
     cfg = load_config()
-    srec_rate = cfg["srec_rate"]
-
     d = reading["date"]
     produced = reading["produced"]
     exported = reading["exported"]
     consumed = reading["consumed"]
-    imported = reading["imported"]
     net = reading["net"]
 
     self_consumed = round(produced - exported, 3)
-    srec_earned = round((produced / 1000) * srec_rate, 4)
+    srec_earned = round((produced / 1000) * cfg["srec_rate"], 4)
 
     conn = get_conn()
     c = conn.cursor()
-
     electricity_savings = compute_electricity_savings(c, d, produced, consumed, net, cfg)
     total_value = round(electricity_savings + srec_earned, 4)
-
-    # Grab the previously stored produced value for this date (0 if first time)
-    existing = c.execute("SELECT produced FROM daily_readings WHERE date=?", (d,)).fetchone()
-    prev_produced = existing["produced"] if existing else 0.0
-
-    # Insert or replace the daily reading
     c.execute("""
         INSERT OR REPLACE INTO daily_readings
             (date, produced, consumed, imported, exported, net,
              self_consumed, srec_earned, electricity_savings, total_value)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (d, produced, consumed, imported, exported, net,
+    """, (d, produced, consumed, reading["imported"], exported, net,
           self_consumed, srec_earned, electricity_savings, total_value))
-
-    # --- Cumulative updates ---
-    def get_cum(key):
-        row = c.execute("SELECT value FROM cumulative WHERE key=?", (key,)).fetchone()
-        return row["value"] if row else 0.0
-
-    def set_cum(key, value):
-        c.execute("UPDATE cumulative SET value=? WHERE key=?", (value, key))
-
-    # Net change in produced for this date (0 on re-runs with same data)
-    delta = produced - prev_produced
-
-    current_month = date.fromisoformat(d).month
-
-    # Monthly reset check
-    reset_month = int(get_cum("monthly_reset_month"))
-    if current_month != reset_month:
-        set_cum("monthly_kwh", 0.0)
-        set_cum("monthly_reset_month", float(current_month))
-
-    # Apply only the delta so re-runs are idempotent
-    set_cum("lifetime_kwh", round(get_cum("lifetime_kwh") + delta, 3))
-    set_cum("monthly_kwh", round(get_cum("monthly_kwh") + delta, 3))
-
     conn.commit()
+    has_later = c.execute("SELECT 1 FROM daily_readings WHERE date > ? LIMIT 1", (d,)).fetchone()
     conn.close()
+
+    if has_later:
+        recompute_savings(_next_day(d), cfg)
     return {
         "self_consumed": self_consumed,
         "srec_earned": srec_earned,
         "electricity_savings": electricity_savings,
         "total_value": total_value,
     }
+
+
+def _next_day(d: str) -> str:
+    return (date.fromisoformat(d) + timedelta(days=1)).isoformat()
+
+
+def recompute_savings(from_date: str, cfg: dict | None = None) -> int:
+    """
+    Recompute electricity_savings, srec_earned and total_value for every stored
+    day on or after from_date — after changing rates in config.json, re-anchoring
+    the bank, or repairing a past day. Returns the number of rows updated.
+    """
+    cfg = cfg or load_config()
+    conn = get_conn()
+    c = conn.cursor()
+    rows = c.execute(
+        "SELECT date, produced, consumed, net FROM daily_readings WHERE date >= ? ORDER BY date",
+        (from_date,),
+    ).fetchall()
+    for r in rows:
+        savings = compute_electricity_savings(c, r["date"], r["produced"], r["consumed"], r["net"], cfg)
+        srec = round((r["produced"] / 1000) * cfg["srec_rate"], 4)
+        c.execute(
+            "UPDATE daily_readings SET electricity_savings=?, srec_earned=?, total_value=? WHERE date=?",
+            (savings, srec, round(savings + srec, 4), r["date"]),
+        )
+    conn.commit()
+    conn.close()
+    return len(rows)
 
 
 def get_reading(d: str) -> dict | None:
@@ -295,6 +279,17 @@ def get_net_bank(since_date: str) -> dict:
     }
 
 
+def get_month_to_date(d: str) -> float:
+    """kWh produced from the 1st of d's month through d (inclusive)."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT SUM(produced) AS total FROM daily_readings WHERE date >= ? AND date <= ?",
+        (d[:8] + "01", d),
+    ).fetchone()
+    conn.close()
+    return (row["total"] or 0.0) if row else 0.0
+
+
 def get_lifetime_production(since_date: str) -> float:
     """Total produced kWh from since_date (inclusive) to the latest reading."""
     conn = get_conn()
@@ -306,32 +301,6 @@ def get_lifetime_production(since_date: str) -> float:
     return (row["total"] or 0.0) if row else 0.0
 
 
-def get_cumulative() -> dict:
-    conn = get_conn()
-    rows = conn.execute("SELECT key, value FROM cumulative").fetchall()
-    conn.close()
-    return {r["key"]: r["value"] for r in rows}
-
-
 if __name__ == "__main__":
     init_db()
     print("DB initialized at", DB_PATH)
-
-    # Test with yesterday's data from enphase_api
-    from enphase_api import fetch_day
-    reading = fetch_day()
-    print("\nFetched:", reading)
-
-    extras = save_reading(reading)
-    print("\nSaved reading. Derived values:")
-    for k, v in extras.items():
-        print(f"  {k:<20} {v}")
-
-    print("\nCumulative:")
-    for k, v in get_cumulative().items():
-        print(f"  {k:<25} {v}")
-
-    print("\nStored daily reading:")
-    row = get_reading(reading["date"])
-    for k, v in row.items():
-        print(f"  {k:<20} {v}")

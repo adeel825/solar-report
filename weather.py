@@ -1,11 +1,14 @@
 import json
 import time
-import requests
 from datetime import date, timedelta
-from pathlib import Path
+from functools import lru_cache
 from statistics import mode
 
-FORECAST_CACHE_PATH = Path(__file__).parent / "forecast_cache.json"
+import requests
+
+from common import PEAK_SUN_HOURS, ROOT, SYSTEM_CAPACITY_KW
+
+FORECAST_CACHE_PATH = ROOT / "forecast_cache.json"
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 
@@ -66,8 +69,6 @@ OUTLOOK_COLOR = {
     "poor": "#D85A30",
 }
 
-SYSTEM_CAPACITY_KW = 11.48  # kW DC nameplate (28 x 410 W); AC rating is 8.12 kW
-PEAK_SUN_HOURS = 8
 CLOUD_PENALTY = 0.75  # at 100% cloud cover, production drops to 25% of theoretical max
 
 
@@ -75,9 +76,11 @@ def _cloud_factor(cloud_pct: float) -> float:
     return max(0.10, 1.0 - CLOUD_PENALTY * (cloud_pct / 100.0))
 
 
+@lru_cache(maxsize=32)
 def fetch_day_weather(d: str, lat: float, lon: float) -> dict | None:
     """Fetch actual weather for date d using peak solar hours (9am–2pm) for the condition code.
-    Tries the archive API first (for past dates), falls back to forecast API."""
+    Tries the archive API first (for past dates), falls back to forecast API.
+    Cached per process: the daily run builds the HTML report and the email from one fetch."""
     params = dict(
         latitude=lat, longitude=lon,
         start_date=d, end_date=d,
@@ -179,6 +182,7 @@ def _load_forecast_cache(forecast_date: str) -> dict | None:
         return None
 
 
+@lru_cache(maxsize=32)
 def fetch_tomorrow_forecast(latitude: float, longitude: float, report_date: str | None = None) -> dict | None:
     """Fetch forecast for the day after report_date.
     Retries up to 3 times on failure. On success, caches 2 days of forecasts
@@ -296,7 +300,7 @@ def build_headline_daily(produced: float, prev, weather, forecast, daily_target:
         est_str   = ""
         if cloud_pct is not None:
             _max    = SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS
-            factor  = max(0.10, 1.0 - 0.75 * (cloud_pct / 100))
+            factor  = _cloud_factor(cloud_pct)
             mid     = _max * factor
             low     = round(mid * 0.85)
             high    = round(min(mid * 1.15, _max))
