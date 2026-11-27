@@ -13,12 +13,12 @@ Sent every morning at 5am covering the previous day.
 
 - **Headline summary** — punchy one-sentence digest: today's rating + all-time percentile + weather context + % change vs yesterday + tomorrow's forecast. Good days show "top X%"; below-average days show "bottom X%" (e.g. *"Tough day — 19.4 kWh (bottom 14%) under overcast skies (71°F), down 71% from yesterday's 67.0 kWh — 🌧️ Rain today (70°F), est. 35–47 kWh."*)
 - **Weather** — daily high/low and conditions in the top-right corner (Open-Meteo, no key required)
-- **Performance meter** — colour-banded gauge rating production as Poor / Fair / Good / Excellent vs. monthly daily target
+- **Performance meter** — colour-banded gauge rating production as Poor / Fair / Good / Excellent vs. monthly daily target. The gauge runs to 135% of target and stretches on bigger days, so the needle never pins at the edge
 - **Energy flow** — produced vs. consumed with net export/import
 - **Change indicators** — every metric shows ▲/▼ vs. the previous day, colour-coded so "up" is always good (more consumption = red, more production = green)
 - **Key metrics** — net metering credit, month-to-date production, break-even timeline, lifetime production since PTO
 - **Financial value** — electricity savings at retail rate plus SREC income
-- **System performance bars**
+- **System performance bars** — percentages are uncapped; once a target is beaten the bar fills the track and the amount past 100% shows as a darker overflow segment after a white 100% marker
   - Production vs. theoretical max
   - Month-to-date vs. monthly target
   - Break-even progress
@@ -41,7 +41,7 @@ Sent on the 1st of each month at 6:30 AM covering the previous month.
 
 ![Monthly solar report](docs/screenshot-monthly.png)
 
-- Production vs monthly target progress bar
+- Production vs monthly target progress bar (over-target months show the true % and a darker overflow segment past 100%)
 - Year-to-date vs annual target
 - Month totals vs previous month with change indicators
 - Financial value including SREC income

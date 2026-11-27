@@ -31,9 +31,65 @@ def _fmt_date(d: str) -> str:
 
 
 def _pct(val, total) -> float:
+    """Percent of total, uncapped — over-target values report their true figure (e.g. 118.0)."""
     if not total:
         return 0.0
-    return min(round(val / total * 100, 1), 100.0)
+    return round(val / total * 100, 1)
+
+
+def _darken(hex_color: str, factor: float = 0.6) -> str:
+    """Darker shade of a #RRGGBB colour — used for the over-target overflow segment."""
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return "#{:02X}{:02X}{:02X}".format(*(round(c * factor) for c in (r, g, b)))
+
+
+def _overflow_split(pct: float) -> tuple[float, float]:
+    """
+    Split a progress value into (base, overflow) widths, as % of the bar track.
+    Up to 100%: base = pct, overflow = 0. Over 100%: the track represents the full
+    value, so base (the 0–100% part) shrinks to 100/pct of the track and the
+    remainder is the overflow segment past the target.
+    """
+    pct = max(pct, 0)
+    if pct <= 100:
+        return round(pct, 1), 0.0
+    base = round(100 / pct * 100, 1)
+    return base, round(100 - base, 1)
+
+
+def _bar_html(pct: float, color: str) -> str:
+    """CSS progress bar; values over 100% get a darker overflow segment past a 100% marker."""
+    base, over = _overflow_split(pct)
+    if not over:
+        return f'<div class="bar-track"><div class="bar-fill" style="width:{base}%;background:{color}"></div></div>'
+    return (
+        f'<div class="bar-track" style="display:flex;overflow:hidden">'
+        f'<div style="width:{base}%;height:8px;background:{color}"></div>'
+        f'<div style="width:{over}%;height:8px;background:{_darken(color)};border-left:2px solid #fff;box-sizing:border-box" '
+        f'title="Over target"></div></div>'
+    )
+
+
+# Performance meter zones, as multiples of the daily target
+METER_ZONES = (0.45, 0.70, 0.90)   # Poor | Fair | Good | Excellent
+METER_HEADROOM = 1.35               # default scale: 0 → 1.35 × daily target
+
+
+def _meter_scale(produced: float, daily_target: float) -> dict:
+    """
+    Scale for the performance meter. Normally 0 → 1.35 × daily target; on a day
+    beyond that the scale stretches so the needle stays on the gauge (zones shrink
+    proportionally) instead of pinning at the right edge.
+    """
+    ratio = produced / daily_target if daily_target else 0
+    scale = max(METER_HEADROOM, ratio * 1.05)
+    z_poor, z_fair, z_good = (round(z / scale * 100, 1) for z in METER_ZONES)
+    return {
+        "scale_max": daily_target * scale,
+        "needle_pct": round(min(ratio / scale * 100, 100), 1),
+        "z_poor": z_poor, "z_fair": z_fair, "z_good": z_good,
+    }
 
 
 def _pto_duration(target_date: str) -> str:
@@ -97,16 +153,12 @@ def _perf_meter(target_date: str, produced: float, monthly_target: int) -> dict:
     else:
         rating, rating_color = "POOR", "#D85A30"
 
-    # Gauge scale: 0 → daily_target × 1.35 (gives breathing room above 100%)
-    scale_max = daily_target * 1.35
-    needle_pct = min(produced / scale_max * 100, 100) if scale_max else 0
+    # Gauge scale: 0 → daily_target × 1.35, stretched on days beyond that
+    meter = _meter_scale(produced, daily_target)
+    scale_max = meter["scale_max"]
+    needle_pct = meter["needle_pct"]
     avg_pct = min(hist_avg / scale_max * 100, 100) if hist_avg and scale_max else None
-    # Zone boundaries as % of scale_max
-    # Poor: 0–45%, Fair: 45–70%, Good: 70–90%, Excellent: 90–100%
-    z_poor  = round(0.45 / 1.35 * 100, 1)   # 33.3%
-    z_fair  = round(0.70 / 1.35 * 100, 1)   # 51.9%
-    z_good  = round(0.90 / 1.35 * 100, 1)   # 66.7%
-    # excellent fills the rest
+    z_poor, z_fair, z_good = meter["z_poor"], meter["z_fair"], meter["z_good"]
 
     sub_parts = [f"Today {produced:.1f} kWh"]
     if hist_avg is not None:
@@ -579,15 +631,15 @@ def build_report(target_date: str) -> Path:
   <div class="section">System performance</div>
   <div class="bar-wrap">
     <div class="bar-label"><span>Production vs theoretical max ({SYSTEM_CAPACITY_KW} kW × {PEAK_SUN_HOURS} hrs)</span><span><strong>{perf_pct:.0f}%</strong> — {produced:.1f} / {SYSTEM_CAPACITY_KW * PEAK_SUN_HOURS:.0f} kWh</span></div>
-    <div class="bar-track"><div class="bar-fill" style="width:{perf_pct}%;background:#1D9E75"></div></div>
+    {_bar_html(perf_pct, "#1D9E75")}
   </div>
   <div class="bar-wrap">
     <div class="bar-label"><span>Month-to-date vs {month_name} target</span><span><strong>{mtd_pct:.1f}%</strong> — {monthly_kwh:.1f} / {monthly_target:,} kWh</span></div>
-    <div class="bar-track"><div class="bar-fill" style="width:{mtd_pct}%;background:#378ADD"></div></div>
+    {_bar_html(mtd_pct, "#378ADD")}
   </div>
   <div class="bar-wrap">
     <div class="bar-label"><span>Break-even progress — ${cfg['net_cost']:,} installation cost</span><span><strong>{be['pct_paid']:.2f}%</strong> — ${be['total_earned']:,.2f} / ${cfg['net_cost']:,}</span></div>
-    <div class="bar-track"><div class="bar-fill" style="width:{be['pct_paid']}%;background:#9B59B6"></div></div>
+    {_bar_html(be['pct_paid'], "#9B59B6")}
   </div>
   <div style="margin-bottom:12px">
     <div class="bar-label" style="margin-bottom:8px"><span style="font-weight:600">Net metering bank</span><span style="color:#378ADD;font-weight:700">{banked_kwh:.1f} kWh banked since PTO{f' <span style="color:#D85A30;font-weight:600;font-size:10px">(excludes {bank_excluded} day{"s" if bank_excluded != 1 else ""} — missing data)</span>' if bank_excluded else ''}</span></div>

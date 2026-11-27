@@ -10,7 +10,7 @@ from datetime import date, timedelta
 
 import database
 import weather as _wx
-from report_builder import _break_even
+from report_builder import _break_even, _darken, _overflow_split, _meter_scale
 
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
@@ -46,9 +46,10 @@ def _fmt_date(d: str) -> str:
 
 
 def _pct(val, total) -> float:
+    """Percent of total, uncapped — over-target values report their true figure."""
     if not total:
         return 0.0
-    return min(round(val / total * 100, 1), 100.0)
+    return round(val / total * 100, 1)
 
 
 def _pto_duration(target_date: str) -> str:
@@ -74,15 +75,26 @@ def _pto_duration(target_date: str) -> str:
 
 
 def _inline_bar(fill_pct: float, color: str, height: int = 8) -> str:
-    """Render a progress bar using a two-cell table (email-safe)."""
-    fill_pct = min(max(fill_pct, 0), 100)
-    empty_pct = 100 - fill_pct
-    filled_td = f'<td width="{fill_pct}%" style="height:{height}px;background:{color};border-radius:{height//2}px;line-height:0;font-size:0">&nbsp;</td>'
-    empty_td  = f'<td width="{empty_pct}%" style="height:{height}px;background:{C_BORDER};line-height:0;font-size:0">&nbsp;</td>' if empty_pct > 0 else ""
+    """
+    Render a progress bar using table cells (email-safe). Over 100%, the bar fills
+    the whole track: the 0–100% part in `color`, then a darker overflow segment
+    (separated by a white 100% marker) for the amount past the target.
+    """
+    base, over = _overflow_split(fill_pct)
+    cell = f"height:{height}px;line-height:0;font-size:0"
+    if over:
+        cells = (
+            f'<td width="{base}%" style="{cell};background:{color}">&nbsp;</td>'
+            f'<td width="{over}%" style="{cell};background:{_darken(color)};border-left:2px solid #ffffff">&nbsp;</td>'
+        )
+    else:
+        empty = round(100 - base, 1)
+        cells = f'<td width="{base}%" style="{cell};background:{color};border-radius:{height//2}px">&nbsp;</td>' if base > 0 else ""
+        cells += f'<td width="{empty}%" style="{cell};background:{C_BORDER}">&nbsp;</td>' if empty > 0 else ""
     return (
         f'<table width="100%" cellpadding="0" cellspacing="0" border="0" '
         f'style="border-radius:{height//2}px;overflow:hidden;background:{C_BORDER}">'
-        f'<tr>{filled_td}{empty_td}</tr></table>'
+        f'<tr>{cells}</tr></table>'
     )
 
 
@@ -193,6 +205,9 @@ def build_email(target_date: str) -> str:
     # Performance rating
     daily_target = monthly_target / 30
     ratio = produced / daily_target if daily_target else 0
+    meter = _meter_scale(produced, daily_target)
+    zw = (meter["z_poor"], round(meter["z_fair"] - meter["z_poor"], 1),
+          round(meter["z_good"] - meter["z_fair"], 1), round(100 - meter["z_good"], 1))
     if ratio >= 0.90:
         rating, rating_color = "EXCELLENT", C_GREEN
     elif ratio >= 0.70:
@@ -349,24 +364,24 @@ def build_email(target_date: str) -> str:
       <!-- Segmented colour bar -->
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:6px;overflow:hidden;margin-bottom:4px">
         <tr>
-          <td width="33%" style="height:12px;background:#FFCDD2;line-height:0;font-size:0">&nbsp;</td>
-          <td width="19%" style="height:12px;background:#FFE0B2;line-height:0;font-size:0">&nbsp;</td>
-          <td width="14%" style="height:12px;background:#C8E6C9;line-height:0;font-size:0">&nbsp;</td>
-          <td width="34%" style="height:12px;background:#A5D6A7;line-height:0;font-size:0">&nbsp;</td>
+          <td width="{zw[0]}%" style="height:12px;background:#FFCDD2;line-height:0;font-size:0">&nbsp;</td>
+          <td width="{zw[1]}%" style="height:12px;background:#FFE0B2;line-height:0;font-size:0">&nbsp;</td>
+          <td width="{zw[2]}%" style="height:12px;background:#C8E6C9;line-height:0;font-size:0">&nbsp;</td>
+          <td width="{zw[3]}%" style="height:12px;background:#A5D6A7;line-height:0;font-size:0">&nbsp;</td>
         </tr>
       </table>
       <!-- Needle indicator as text marker -->
       <table width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td width="{max(perf_pct - 4, 0):.0f}%" style="font-size:0">&nbsp;</td>
+          <td width="{max(meter['needle_pct'] - 4, 0):.0f}%" style="font-size:0">&nbsp;</td>
           <td style="font-size:12px;color:#1a1a1a;font-weight:700;white-space:nowrap">&#9650; {produced:.1f} kWh</td>
         </tr>
       </table>
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:2px">
         <tr>
-          <td style="font-size:10px;color:#bbb;width:33%">Poor</td>
-          <td style="font-size:10px;color:#bbb;width:19%">Fair</td>
-          <td style="font-size:10px;color:#bbb;width:14%">Good</td>
+          <td style="font-size:10px;color:#bbb;width:{zw[0]}%">Poor</td>
+          <td style="font-size:10px;color:#bbb;width:{zw[1]}%">Fair</td>
+          <td style="font-size:10px;color:#bbb;width:{zw[2]}%">Good</td>
           <td style="font-size:10px;color:#bbb">Excellent</td>
         </tr>
       </table>
